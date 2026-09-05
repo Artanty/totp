@@ -181,3 +181,16 @@ src/lib/otpauth.ts      — парсер otpauth:// URI
 - Именование: папка на сервере (слот reverse-proxy) == имя systemd-юнита == REVERSED_PROXY_SLOT.
 - Осталось: коммит+push master, прогнать serf для totp@github/back (занесёт .env в
   slave main), потом main-пуш триггерит деплой.
+
+## 2026-09-05 — Провал SCP: SSH_* не было в .env (fix)
+- Лог деплоя (slave-репо thieves-guild): сборка ОК, но garygrossgarten/github-action-scp
+  ушёл на localhost — SSH_HOST был пуст → default 'localhost'. В .env не оказалось
+  SSH_HOST/SSH_USER/USER_PASS/SSH_PRIVATE_KEY (в safe их нет; остальное экспортнулось).
+- Добавил в workflow: маскирование значений (::add-mask::) при экспорте и шаг
+  «Validate required env» (fail-fast: SSH_HOST, SSH_USER, USER_PASS, SSH_PRIVATE_KEY,
+  REVERSED_PROXY_SLOT) до Build/SCP.
+- TODO (юзер): добавить SSH_* в safe-envs проекта totp@github/back и прогнать serf,
+  чтобы .env попал в slave main; затем перезапустить workflow.
+- Заметка: значения TOTP_MASTER_KEY/JWT_SECRET в .env сейчас dev (из локального .env),
+  не prod. На сервер .env не шипится, рантайм не пострадает; но для консистентного
+  .env-шаблона в safe стоит положить прод-значения.

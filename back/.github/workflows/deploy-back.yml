@@ -34,11 +34,23 @@ jobs:
           if (/[\n\r]/.test(val)) {
             out.push(`${key}<<EOF\n${val}\nEOF`);
           } else {
+            console.log(`::add-mask::${val}`);
             out.push(`${key}=${val}`);
           }
         }
         fs.appendFileSync(process.env.GITHUB_ENV, out.join('\n') + '\n');
         EOF
+
+    - name: Validate required env
+      run: |
+        missing=""
+        for k in SSH_HOST SSH_USER USER_PASS SSH_PRIVATE_KEY REVERSED_PROXY_SLOT; do
+          if [ -z "${!k}" ]; then missing="$missing $k"; fi
+        done
+        if [ -n "$missing" ]; then
+          echo "Missing env vars; add them to project envs in safe and re-run serf:$missing" >&2
+          exit 1
+        fi
 
     - name: Build
       run: npm run build
