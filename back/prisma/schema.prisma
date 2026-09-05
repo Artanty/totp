@@ -1,0 +1,34 @@
+generator client {
+  provider      = "prisma-client"
+  output        = "../src/generated/prisma"
+  binaryTargets = ["native", "debian-openssl-3.0.x"]
+}
+
+datasource db {
+  provider = "mysql"
+  url      = env("DATABASE_URL")
+}
+
+model User {
+  id           Int      @id @default(autoincrement())
+  email        String   @unique
+  passwordHash String
+  createdAt    DateTime @default(now())
+  tokens       Token[]
+}
+
+model Token {
+  id        Int      @id @default(autoincrement())
+  userId    Int
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  label     String
+  issuer    String?
+  account   String?
+  digits    Int      @default(6)
+  period    Int      @default(30)
+  algorithm String   @default("SHA1")
+  secretEnc String
+  createdAt DateTime @default(now())
+
+  @@index([userId])
+}
