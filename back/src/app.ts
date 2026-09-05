@@ -12,7 +12,6 @@ declare module 'fastify' {
   }
 }
 
-
 export function buildApp(): FastifyInstance {
   const app = Fastify({ logger: true });
   const prisma = new PrismaClient({ datasourceUrl: buildDatabaseUrl() });
