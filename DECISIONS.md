@@ -194,3 +194,13 @@ src/lib/otpauth.ts      — парсер otpauth:// URI
 - Заметка: значения TOTP_MASTER_KEY/JWT_SECRET в .env сейчас dev (из локального .env),
   не prod. На сервер .env не шипится, рантайм не пострадает; но для консистентного
   .env-шаблона в safe стоит положить прод-значения.
+
+## 2026-09-05 — Деплой дошёл до SSH; key битый → password (fix)
+- SCP успешно залил дистрибутив на сервер: /root/totp/dist/*, generated (движок) и
+  src/generated/prisma/libquery_engine-debian-openssl-3.0.x.so.node — раскладка ок,
+  рантайм найдёт движок через process.cwd()/src/generated/prisma (systemd cwd=/root/totp).
+- appleboy/ssh-action упал: ssh.ParsePrivateKey: no key found — SSH_PRIVATE_KEY в .env
+  приехал некорректным (многострочный pem сматчен/побит в safe/serf).
+- Fix: аутентификация SSH через парольный USER_PASS (как у garygrossgarten scp, который
+  зашёл успешно). key убран; SSH_PRIVATE_KEY больше не в required (validate-список:
+  SSH_HOST, SSH_USER, USER_PASS, REVERSED_PROXY_SLOT).

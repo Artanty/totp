@@ -44,7 +44,7 @@ jobs:
     - name: Validate required env
       run: |
         missing=""
-        for k in SSH_HOST SSH_USER USER_PASS SSH_PRIVATE_KEY REVERSED_PROXY_SLOT; do
+        for k in SSH_HOST SSH_USER USER_PASS REVERSED_PROXY_SLOT; do
           if [ -z "${!k}" ]; then missing="$missing $k"; fi
         done
         if [ -n "$missing" ]; then
@@ -74,7 +74,7 @@ jobs:
       with:
         host: ${{ env.SSH_HOST }}
         username: ${{ env.SSH_USER }}
-        key: ${{ env.SSH_PRIVATE_KEY }}
+        password: ${{ env.USER_PASS }}
         script: |
           cd /root/${{ env.REVERSED_PROXY_SLOT }}
           npm ci --omit=dev
