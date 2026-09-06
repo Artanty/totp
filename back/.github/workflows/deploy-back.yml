@@ -59,6 +59,8 @@ jobs:
       run: |
         mkdir -p deploy
         cp -r dist src/generated prisma package.json package-lock.json prisma.config.ts deploy/
+        cp src/generated/prisma/libquery_engine-*.so.node deploy/dist/generated/prisma/
+        ls -la deploy/dist/generated/prisma | grep libquery_engine
 
     - name: Copy folder content recursively to remote
       uses: garygrossgarten/github-action-scp@release

@@ -204,3 +204,23 @@ src/lib/otpauth.ts      — парсер otpauth:// URI
 - Fix: аутентификация SSH через парольный USER_PASS (как у garygrossgarten scp, который
   зашёл успешно). key убран; SSH_PRIVATE_KEY больше не в required (validate-список:
   SSH_HOST, SSH_USER, USER_PASS, REVERSED_PROXY_SLOT).
+
+## 2026-09-06 — Crash-loop: Prisma engine не был в dist/generated/prisma (root cause+fix)
+- Симптом: totp.service в auto-restart (exit-code 1); "totp pass doesnt match" = на деле
+  PrismaClientInitializationError: could not locate the Query Engine.
+- Почему: клиент Prisma, сгенерированный в CI, ищет движок рядом с собой
+  (r.dirname = /root/totp/dist/generated/prisma) и по раcшитику build-местам
+  (/home/runner/work/.../src/generated/prisma). Мы клали движок в src/generated —
+  рантайм его там не ищет. Раньше сервер собирался сам (prisma generate на сервере),
+  потому работало.
+- Fix (workflow, "Stage deploy artifacts"): добавил копирование
+  src/generated/prisma/libquery_engine-*.so.node → deploy/dist/generated/prisma/.
+  Проверено локально: движок в deploy/dist/generated/prisma.
+- Сервер восстановлен вручную: cp generated/prisma/libquery_engine-*.so.node
+  в dist/generated/prisma/ + systemctl restart totp → active, отвечает.
+- Уточнение env в safe (проверено по project_data id=17): USER_PASS/SSh_HOST/SSH_USER/
+  slot/TOTP_MASTER_KEY/JWT_SECRET — ок; SSH_PRIVATE_KEY лежит ОДНОЙ строкой
+  (BEGIN/END + base64 с пробелами) — невалидный PEM, поэтому ключом не пользоваться
+  (работаем по паролю).
+- Цепочка для будущих деплоев: commit master → push (юзер) → serf totp@github/back
+  → slave main → GH action с фиксом стейджинга.
