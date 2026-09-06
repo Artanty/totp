@@ -20,7 +20,6 @@ export function buildApp(): FastifyInstance {
   app.decorate('prisma', prisma);
   app.register(authPlugin);
 
-  
   const apiPrefix = process.env.API_PREFIX ?? '/totp';
   app.register(authRoutes, { prefix: `${apiPrefix}/auth` });
   app.register(tokenRoutes, { prefix: `${apiPrefix}/tokens` });
