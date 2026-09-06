@@ -224,3 +224,31 @@ src/lib/otpauth.ts      — парсер otpauth:// URI
   (работаем по паролю).
 - Цепочка для будущих деплоев: commit master → push (юзер) → serf totp@github/back
   → slave main → GH action с фиксом стейджинга.
+
+## 2026-09-06 — Логирование как в safe/back + GET /get-updates
+
+### Planned
+1. Скопировать `core/logger.ts` из safe/back в `totp/back/src/lib/logger.ts`
+   (file rotation app.log/error.log/.N, sanitize секретов, queue).
+2. app.ts: preHandler-хук -> лог запросов (method/url/ip/params/query/body/headers),
+   setNotFoundHandler -> 404 + лог, onError -> logger.error; GET ${apiPrefix}/get-updates
+   с теми же props: version/commit_message/project_id/namespace/slave_repo/logs{log,error,start}/envs.
+3. index.ts: [START] ts, "Server is running on port", запись app.strat.log 'startup',
+   uncaughtException/unhandledRejection -> logger.error.
+4. Проверка: typecheck + build. На сервере не деплою (push только по явному запросу).
+### Result
+- `src/lib/logger.ts` = копия safe core/logger.ts (app.log/error.log, ротация .1..5,
+  LOG_DIR/LOG_MAX_BYTES/LOG_MAX_FILES/LOG_DISABLED, sanitize секретов).
+- app.ts: preHandler-хук лог запросов (GET /get-updates пропускается), onError ->
+  logger.error, setNotFoundHandler -> JSON 404. GET ${apiPrefix}/get-updates ->
+  {version,commit_message,project_id,namespace,slave_repo,logs:{log,error,start},envs}
+  (envs = ключи process.env->true; logs без /get-updates).
+- index.ts: [START] ts, "Server is running on port", app.strat.log 'startup',
+  uncaughtException/unhandledRejection -> logger.error.
+- Проверено (typecheck+build+smoke на 3333/3334): старт/запросы пишутся в app.log,
+  ошибки в error.log (пароль замаскирован ***REDACTED***), get-updates отдаёт
+  [logs,envs,version..slave] (undefined-пропсы пропускаются — как express res.json),
+  одна запись на запрос (404 тоже), /get-updates из request-лога исключён.
+- НЕ задеплоено: на сервере выйдет после commit->push->serf->деплой. Также serf-эnv
+  для totp пока не отдаёт TAG_VERSION/COMMIT/PROJECT_ID/NAMESPACE/SLAVE_REPO —
+  вернутся как undefined, если не добавить в safe envs.
