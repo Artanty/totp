@@ -225,6 +225,46 @@ src/lib/otpauth.ts      — парсер otpauth:// URI
 - Цепочка для будущих деплоев: commit master → push (юзер) → serf totp@github/back
   → slave main → GH action с фиксом стейджинга.
 
+## 2026-09-08 — Приёмочный сервис приложений (App) + UI на /totp/ui (план)
+
+### Проблема
+- Раньше новые веб-аппы подключались вручную: отдельный юзер, отдельный токен, общий секрет.
+- Требование юзера: ИЗОЛЯЦИЯ — у каждого приложения свой секрет и свои коды; приложение НЕ может
+  видеть/верифицировать чужие токены.
+- Нужны: маршрут "добавить приложение" + простой фронтенд.
+
+### Дизайн
+- Новая модель `App` (slug unique, adminId→User, gateUserId unique→User, tokenId unique→Token, name).
+- Каждое приложение = отдельный gate-юзер `{slug}.gate@totp.local` + свой токен со свежим секретом
+  (20 байт → base32). Верификация scoped by userId, поэтому приложение видит ТОЛЬКО свой токен.
+- Генерируем пароль юзеру, показываем один раз в ответе POST /apps.
+- QR: сервер рендерит PNG data-URL через npm-пакет `qrcode`.
+
+### Маршруты (prefix = API_PREFIX, дефолт /totp)
+- `POST /totp/apps`   — { name, slug? } → { app, otpauthUri, qrDataUrl, integration{...} }
+- `GET  /totp/apps`   — список созданных этим админом приложений
+- `DELETE /totp/apps/:id` — удалить gate-юзера (каскад → токен → App)
+- `GET  /totp/ui`     — HTML-страница (логин, добавить приложение + QR + .env блок, список, revoke)
+
+### Файлы
+- `prisma/schema.prisma` + миграция (migrate diff, без push)
+- `src/lib/otpauth.ts` — добавить base32Encode + buildOtpauthUri
+- `src/routes/apps.ts` — новый
+- `src/routes/ui.ts`   — новый (инлайн HTML, без static-директории)
+- `src/app.ts`          — монтирование + skip логирования /ui
+- package.json         — + qrcode, @types/qrcode
+- .env.example         — опционально TOTP_SERVICE_URL (для integration-блока)
+
+### Изоляция
+- Коды верификации/чтения ищут `where: { id, userId: request.user.id }`.
+- У каждого gate-юзера ровно один токен → app A (login как a.gate) не достанет токен B.
+- Секреты разные для каждого приложения (по одному `secretEnc` на токен).
+
+### Проверка
+- typecheck + build в back/.
+- Смоук: login админа → POST /apps → верификация кода юзером A OK → юзером B FAIL → DELETE.
+- На сервер НЕ деплою (push только по явному запросу).
+
 ## 2026-09-06 — Логирование как в safe/back + GET /get-updates
 
 ### Planned
@@ -252,3 +292,31 @@ src/lib/otpauth.ts      — парсер otpauth:// URI
 - НЕ задеплоено: на сервере выйдет после commit->push->serf->деплой. Также serf-эnv
   для totp пока не отдаёт TAG_VERSION/COMMIT/PROJECT_ID/NAMESPACE/SLAVE_REPO —
   вернутся как undefined, если не добавить в safe envs.
+
+### Progress (2026-09-08)
+- План записан выше. Начинаю реализацию: schema → миграция → lib → routes → app.ts → UI → проверка.
+
+### Result (2026-09-08) — ГОТОВО
+- schema.prisma: добавлена модель `App` (slug unique, adminId→User, gateUserId unique→User,
+  tokenId unique→Token, name). User получил back-relations adminApps/gateFor, Token — app.
+- Миграция `20260908000000_add_apps` (ручной SQL в стиле init, migrate diff не удалось —
+  БД доступна только с IP сервера). Добавлен недостающий `migrations/migration_lock.toml` (provider=mysql).
+- `src/lib/otpauth.ts`: + `base32Encode()` и `buildOtpauthUri()`.
+- Новая зависимость: `qrcode` (+@types/qrcode) — сервер рендерит PNG data-URL QR.
+- `src/routes/apps.ts`: POST /totp/apps, GET /totp/apps, DELETE /totp/apps/:id.
+  - Каждое приложение = отдельный gate-юзер `{slug}.gate@totp.local` (случайный пароль, показывается
+    один раз) + свой токен со свежим секретом (20 байт → base32) + запись App.
+  - Slug генеруется из name при пустом/опц. поле; коллизии → суффикс -2, -3…
+  - Ответ POST /apps: { app{id,name,slug,gateEmail,tokenId}, otpauthUri, qrDataUrl,
+    integration{totp_service_url,totp_service_user,totp_service_password,totp_token_id} }.
+  - DELETE: удаляем App, затем gate-юзера (каскад на токен). 404 если не админ приложения.
+- `src/routes/ui.ts`: GET /totp/ui — инлайн HTML (без статики): логин → форма создания приложения →
+  QR + копируемый .env-блок → таблица приложений с revoke, logout. BASE инжектится из API_PREFIX
+  (`const BASE = "/totp"` в рантайме). В лог-скип добавлен `${apiPrefix}/ui`.
+- Проверено (`typecheck` + `build` чисто; локальный MySQL 8 в Docker-менедж-CLI нет — через brew,
+  миграции применены вручную; смоук на :3999):
+  - register/login админа; POST /apps создаёт изолированный gate-юзер + токен; QR валидный PNG.
+  - verify своим кодом → { valid:true }; неверный код → false.
+  - ИЗОЛЯЦИЯ: gate B не может verify токен A (404), gate A не может verify/code токен B (404).
+  - GET /apps список, GET /ui → 200, DELETE app → 204, gate-юзер удалён (login 401 после revoke).
+- MySQL (brew) оставлен установленным, сервис остановлен. На сервер НЕ задеплоено.

@@ -2,6 +2,27 @@ import type { TOTPAlgorithm } from './totp.js';
 
 const BASE32_ALPHABET = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ234567';
 
+export function base32Encode(input: Buffer, padding = false): string {
+  let bits = 0;
+  let value = 0;
+  let output = '';
+
+  for (const byte of input) {
+    value = (value << 8) | byte;
+    bits += 8;
+    while (bits >= 5) {
+      output += BASE32_ALPHABET[(value >>> (bits - 5)) & 0x1f];
+      bits -= 5;
+    }
+  }
+  if (bits > 0) output += BASE32_ALPHABET[(value << (5 - bits)) & 0x1f];
+
+  if (padding) {
+    while (output.length % 8 !== 0) output += '=';
+  }
+  return output;
+}
+
 export function base32Decode(input: string): Buffer {
   const clean = input.toUpperCase().replace(/[\s=]/g, '');
   let bits = 0;
@@ -68,4 +89,28 @@ export function parseOtpauthUri(uri: string): OtpauthData {
     period: periodRaw,
     counter: counterRaw,
   };
+}
+
+export interface BuildOtpauthOptions {
+  issuer: string;
+  account: string;
+  secret: Buffer;
+  algorithm?: TOTPAlgorithm;
+  digits?: number;
+  period?: number;
+}
+
+export function buildOtpauthUri(options: BuildOtpauthOptions): string {
+  const algorithm = options.algorithm ?? 'SHA1';
+  const digits = options.digits ?? 6;
+  const period = options.period ?? 30;
+  const label = `${options.issuer}:${options.account}`;
+  const params = new URLSearchParams({
+    secret: base32Encode(options.secret),
+    issuer: options.issuer,
+    algorithm,
+    digits: String(digits),
+    period: String(period),
+  });
+  return `otpauth://totp/${encodeURIComponent(label)}?${params.toString()}`;
 }

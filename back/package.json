@@ -1,6 +1,6 @@
 {
   "name": "totp",
-  "version": "0.1.11",
+  "version": "0.1.12",
   "description": "Authy-like TOTP token manager service",
   "private": true,
   "type": "module",
@@ -16,11 +16,13 @@
     "@prisma/client": "^6.19.3",
     "bcryptjs": "^3.0.3",
     "dotenv": "^17.4.2",
-    "fastify": "^4.29.1"
+    "fastify": "^4.29.1",
+    "qrcode": "^1.5.4"
   },
   "devDependencies": {
     "@types/bcryptjs": "^2.4.6",
     "@types/node": "^20.19.43",
+    "@types/qrcode": "^1.5.6",
     "prisma": "^6.19.3",
     "tsx": "^4.23.13",
     "typescript": "^5.9.3"
