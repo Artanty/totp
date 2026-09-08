@@ -78,6 +78,7 @@ jobs:
         username: ${{ env.SSH_USER }}
         password: ${{ env.USER_PASS }}
         script: |
+          set -e
           cd /root/${{ env.REVERSED_PROXY_SLOT }}
           npm ci --omit=dev
           npx --yes prisma@6.19.3 migrate deploy

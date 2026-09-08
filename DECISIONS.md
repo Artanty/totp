@@ -321,6 +321,42 @@ src/lib/otpauth.ts      — парсер otpauth:// URI
   - GET /apps список, GET /ui → 200, DELETE app → 204, gate-юзер удалён (login 401 после revoke).
 - MySQL (brew) оставлен установленным, сервис остановлен. На сервер НЕ задеплоено.
 
+## 2026-09-08 — Инцидент: таблица App отсутствует в проде (план)
+
+### Проблема
+- После регистрации аккаунта на /totp/ui: `GET /totp/apps` → 500 P2021 "table `App` does not exist".
+- Причина (диагностировал на сервере, read-only): `npx prisma migrate deploy` в деплое падает
+  с `P1012 Environment variable not found: DATABASE_URL` — с перехода на DB_* (2026-09-05)
+  миграции НЕ применялись. prisma.config.ts задаёт URL, но CLI всё равно валидирует
+  `url = env("DATABASE_URL")` в schema.prisma, а DATABASE_URL в окружении нет.
+- Workflow ssh-скрипт без `set -e` → `systemctl restart totp` выполнялся даже при упавшей
+  миграции → деплой «зелёный», а схема отстаёт. В БД cs99850_totp только init (User/Token),
+  add_apps pending.
+
+### Plan
+1. `back/prisma.config.ts`: из DB_* собрать URL и положить `process.env.DATABASE_URL`
+   ДО возврата конфига → `env("DATABASE_URL")` резолвится; migrate/status/validate/diff
+   работают и на сервере, и локально (без дублирования секретов).
+2. `back/.github/workflows/deploy-back.yml`: в ssh-скрипт добавить `set -e`, чтобы падение
+   `migrate deploy` abort'ило шаг ДО `systemctl restart`.
+3. Немедленно на проде: source /root/totp/.env → DATABASE_URL из DB_* →
+   `npx --yes prisma@6.19.3 migrate deploy` → проверить SHOW TABLES (App) и _prisma_migrations.
+4. Проверка E2E на /totp/ui: создать app (QR + .env), список, revoke.
+5. Прогресс в DECISIONS.md. Push только по явному запросу (деплой — обычный цикл commit→serf).
+
+### Progress (2026-09-08)
+- Тип-чек + build (0.1.15) чистые; `prisma validate` OK после фикса конфига.
+- Немедленно на проде применил миграцию вручную: DATABASE_URL из DB_* →
+  `npx prisma@6.19.3 migrate deploy` → `20260908000000_add_apps` применён,
+  App-таблица создана, add_apps записана в _prisma_migrations.
+- E2E на проде (:3001 через сервер): register smoke → GET /totp/apps = [] (200, без 500) →
+  POST /apps 201 (QR dataURL + integration keys, tokenId=3) → DELETE 204. Смоук-юзер и
+  токен закаскадно удалены; в БД остался только Safe Login:admin (token 2).
+- Изменения ЛОКАЛЬНЫ: back/prisma.config.ts (process.env.DATABASE_URL ??= url из DB_*)
+  и back/.github/workflows/deploy-back.yml (set -e в ssh-скрипте). На сервер уедут
+  обычным циклом commit→serf→деплой. На будущее: миграции в деплое теперь падают красным
+  ДО systemctl restart (не будет «зелёных» деплоев со старевшей схемой).
+
 ## 2026-09-08 — Favicons на web-admin + русская инструкция (план)
 
 - Favicons юзер положил в `input/favicon/`. Копирую все 7 файлов (+ site.webmanifest) в

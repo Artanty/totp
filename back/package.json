@@ -1,6 +1,6 @@
 {
   "name": "totp",
-  "version": "0.1.15",
+  "version": "0.1.16",
   "description": "Authy-like TOTP token manager service",
   "private": true,
   "type": "module",
