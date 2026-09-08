@@ -51,6 +51,7 @@ export function buildApp(): FastifyInstance {
     }
   });
 
+  
   app.addHook('onError', async (request, _reply, error) => {
     logger.error(`HTTP ${request.method} ${request.url} failed`, error);
   });
