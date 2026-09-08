@@ -320,3 +320,14 @@ src/lib/otpauth.ts      — парсер otpauth:// URI
   - ИЗОЛЯЦИЯ: gate B не может verify токен A (404), gate A не может verify/code токен B (404).
   - GET /apps список, GET /ui → 200, DELETE app → 204, gate-юзер удалён (login 401 после revoke).
 - MySQL (brew) оставлен установленным, сервис остановлен. На сервер НЕ задеплоено.
+
+## 2026-09-08 — UI: регистрация аккаунта на странице логина (план+done)
+- План: вместо curl-подсказки добавить в login-вью (src/routes/ui.ts) inline-форму регистрации:
+  тумблер "No account? Create one" → появляется поле confirm password, кнопка становится
+  "Create account", submit → POST {prefix}/auth/register → JWT сразу в localStorage + showMain.
+- Done: тумблер/режим `authMode` (login|register), `setAuthMode()`, `submitAuth()` с валидацией
+  email/password>=8/совпадение confirm; 409 → переключение в login с пояснением; Enter во всех полях;
+  logout сбрасывает режим. Бэкенд не менялся (register уже отдаёт {token,user}).
+- Проверено: typecheck+build чисто; рантайм-рендер страницы ок (BASE=/totp, title TOTP, все элементы
+  есть; URL строится динамически '/auth/'+mode).
+- НЕ задеплоено: выйдет после commit->push->serf->деплой.

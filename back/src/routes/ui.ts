@@ -48,9 +48,16 @@ function pageHtml(apiPrefix: string): string {
     <label for="email">Email</label>
     <input id="email" type="email" autocomplete="username" placeholder="admin@totp.local">
     <label for="password">Password</label>
-    <input id="password" type="password" autocomplete="current-password">
+    <input id="password" type="password" autocomplete="current-password" placeholder="at least 8 characters">
+    <div id="confirmWrap" class="hidden">
+      <label for="confirm">Confirm password</label>
+      <input id="confirm" type="password" autocomplete="new-password">
+    </div>
     <div id="loginError" class="error hidden"></div>
     <button id="loginBtn">Sign in</button>
+    <div class="inline" style="margin-top:12px">
+      <button class="link" id="toggleAuthBtn">No account? Create one</button>
+    </div>
   </div>
 
   <div id="mainView" class="hidden">
@@ -134,22 +141,52 @@ async function revokeApp(id) {
   } catch (err) { alert(err.message); }
 }
 
-$('loginBtn').addEventListener('click', async () => {
+let authMode = 'login';
+
+function setAuthMode(mode) {
+  authMode = mode;
+  $('confirmWrap').classList.toggle('hidden', mode === 'login');
+  $('loginBtn').textContent = mode === 'register' ? 'Create account' : 'Sign in';
+  $('toggleAuthBtn').textContent = mode === 'register' ? 'Already have an account? Sign in' : 'No account? Create one';
+  $('password').autocomplete = mode === 'register' ? 'new-password' : 'current-password';
+  $('loginError').classList.add('hidden');
+}
+
+async function submitAuth() {
   const email = $('email').value.trim();
   const password = $('password').value;
   $('loginError').classList.add('hidden');
+  if (!email) { $('loginError').textContent = 'Email is required'; $('loginError').classList.remove('hidden'); return; }
+  if (password.length < 8) { $('loginError').textContent = 'Password must be at least 8 characters'; $('loginError').classList.remove('hidden'); return; }
+  if (authMode === 'register') {
+    if (password !== $('confirm').value) { $('loginError').textContent = 'Passwords do not match'; $('loginError').classList.remove('hidden'); return; }
+  }
   try {
-    const data = await api('/auth/login', { method: 'POST', headers: headers(true), body: JSON.stringify({ email, password }) });
+    const data = await api('/auth/' + (authMode === 'register' ? 'register' : 'login'), { method: 'POST', headers: headers(true), body: JSON.stringify({ email, password }) });
     localStorage.setItem('totp_jwt', data.token);
     showMain(data.user.email);
   } catch (err) {
-    $('loginError').textContent = err.message;
+    if (authMode === 'register' && err.status === 409) {
+      setAuthMode('login');
+      $('loginError').textContent = 'That email is already registered — sign in instead';
+    } else {
+      $('loginError').textContent = err.message;
+    }
     $('loginError').classList.remove('hidden');
   }
-});
+}
+
+$('loginBtn').addEventListener('click', submitAuth);
+
+['email', 'password', 'confirm'].forEach((id) => $(id).addEventListener('keydown', (e) => {
+  if (e.key === 'Enter') submitAuth();
+}));
+
+$('toggleAuthBtn').addEventListener('click', () => setAuthMode(authMode === 'login' ? 'register' : 'login'));
 
 $('logoutBtn').addEventListener('click', () => {
   localStorage.removeItem('totp_jwt');
+  setAuthMode('login');
   showLogin();
 });
 
