@@ -321,6 +321,47 @@ src/lib/otpauth.ts      — парсер otpauth:// URI
   - GET /apps список, GET /ui → 200, DELETE app → 204, gate-юзер удалён (login 401 после revoke).
 - MySQL (brew) оставлен установленным, сервис остановлен. На сервер НЕ задеплоено.
 
+## 2026-09-08 — Favicons на web-admin + русская инструкция (план)
+
+- Favicons юзер положил в `input/favicon/`. Копирую все 7 файлов (+ site.webmanifest) в
+  `back/src/public/favicon/` — эта папка коммитится и уезжает в деплой через `dist/`.
+- `back/package.json`: build → `prisma generate && tsc && cp -r src/public dist/public`,
+  чтобы ассеты оказывались рядом с рантаймом (в CI dist целиком пакетируется, workflow не меняем).
+- `back/src/app.ts`: регистрация `uiRoutes` переезжает с префикса `/totp/ui` на `/totp`
+  (внутри ui.ts маршруты `/ui` и `/favicon/:file`); `${apiPrefix}/favicon` добавляется в
+  request-log skip (чтобы не шуметь логами).
+- `back/src/routes/ui.ts`:
+  - `<head>`: link favicon.ico / 16/32px PNG / apple-touch-icon / manifest + theme-color.
+  - маршрут `GET /favicon/:file`: whitelist имён+MIME (без path traversal), файлы из
+    `src/public/favicon` (dev) / `dist/public/favicon` (prod) через `import.meta.url`;
+    `Cache-Control: public, max-age=86400`; site.webmanifest отдаётся с относительными
+    src-путями к иконкам и name="TOTP · apps".
+  - Справа от карточки — полновысотный блок-инструкция НА РУССКОМ: 6 шагов
+    (войти/создать аккаунт → create app → добавить в Authy: + Add account → Scan QR /
+    Enter key manually → скопировать .env → приложение верифицирует код через
+    POST /totp/tokens/{id}/verify) + заметки про изоляцию и revoke. Вёрстка: flex-контейнер
+    `.layout` (card + aside.guide), stretch по высоте, на узких экранах — столбиком.
+- Проверка: typecheck + build в back/. Не деплою (push только по явному запросу).
+
+### Progress (2026-09-08) — ГОТОВО
+- Favicons скопированы в `back/src/public/favicon/` (7 файлов из input/favicon, коммитятся).
+- package.json: build = `prisma generate && tsc && cp -r src/public dist/public` — ассеты
+  рядом с рантаймом; workflow CI пакетирует весь dist → на сервер `/root/totp/dist/public/favicon`.
+- app.ts: uiRoutes регистрируется с префиксом `apiPrefix` (маршруты `/ui` и `/favicon/:file`),
+  `${apiPrefix}/favicon` добавлен в request-log skip.
+- ui.ts: head получил link favicon.ico/16/32png/apple-touch-icon/manifest + theme-color;
+  маршрут `GET /favicon/:file` с whitelist имён+MIME (без path traversal), файлы через
+  `import.meta.url` → src/public/favicon (dev) / dist/public/favicon (prod),
+  `Cache-Control: public, max-age=86400`; site.webmanifest отдаётся с относительными путями
+  к иконкам и name="TOTP · apps". Справа от карточки — полновысотный русскоязычный блок
+  «Подключение нового приложения» (6 шагов: вход/регистрация → create app → добавление
+  в Authy: Add account → Scan QR / Enter key manually → копирование .env → верификация
+  через POST /totp/tokens/{id}/verify; заметки про изоляцию и revoke).
+- Проверено: typecheck+build чисто, смоук на :3335 — /totp/ui 200, favicon.ico/32x32
+  200 с верными MIME, manifest переписан, незнакомый файл → 404 JSON, все head-links и
+  русский блок на странице.
+- НЕ задеплоено: выйдет после commit->push->serf->деплой.
+
 ## 2026-09-08 — UI: регистрация аккаунта на странице логина (план+done)
 - План: вместо curl-подсказки добавить в login-вью (src/routes/ui.ts) inline-форму регистрации:
   тумблер "No account? Create one" → появляется поле confirm password, кнопка становится

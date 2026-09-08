@@ -26,9 +26,9 @@ export function buildApp(): FastifyInstance {
   app.register(authRoutes, { prefix: `${apiPrefix}/auth` });
   app.register(tokenRoutes, { prefix: `${apiPrefix}/tokens` });
   app.register(appRoutes, { prefix: `${apiPrefix}/apps` });
-  app.register(uiRoutes, { prefix: `${apiPrefix}/ui` });
+  app.register(uiRoutes, { prefix: apiPrefix });
 
-  const requestLogSkipPrefixes = [`${apiPrefix}/get-updates`, `${apiPrefix}/ui`];
+  const requestLogSkipPrefixes = [`${apiPrefix}/get-updates`, `${apiPrefix}/ui`, `${apiPrefix}/favicon`];
 
   app.addHook('preHandler', async (request) => {
     try {
