@@ -125,23 +125,30 @@ function pageHtml(apiPrefix: string): string {
 
   <aside class="guide">
     <h2>Подключение нового приложения</h2>
-    <p class="intro">Регистрация приложения и добавление его в Authy — по шагам.</p>
-    <ol>
-      <li><b>Войдите</b> в аккаунт слева или создайте новый (ссылка «No account? Create one»).</li>
-      <li>Укажите имя в поле <b>App name</b> (поле <b>Slug</b> можно оставить пустым — оно сгенерируется автоматически) и нажмите <b>Create app</b>.</li>
-      <li><b>Добавьте приложение в Authy:</b>
-        <ul>
-          <li>В Authy нажмите <b>+</b> (Add account).</li>
-          <li>Выберите <b>Scan QR code</b> и наведите камеру на QR-код, появившийся слева.</li>
-          <li>Если скан недоступен — <b>Enter key manually</b> и вставьте otpauth-URI или секрет.</li>
-        </ul>
-      </li>
-      <li>Скопируйте появившийся блок <code class="inline">.env</code> в конфигурацию приложения: <code class="inline">TOTP_SERVICE_URL</code>, <code class="inline">TOTP_SERVICE_USER</code>, <code class="inline">TOTP_SERVICE_PASSWORD</code>, <code class="inline">TOTP_TOKEN_ID</code>.</li>
-      <li>Приложение будет проверять 6-значные коды пользователей через <code class="inline">POST ${apiPrefix}/tokens/{id}/verify</code>.</li>
-      <li>Пароль нового приложения показывается <b>один раз</b> — сохраните его.</li>
-    </ol>
-    <div class="hint">Каждое приложение изолировано: у него свой секрет и свои коды. Код одного приложения не подойдёт для другого.</div>
-    <div class="hint">Чтобы отозвать доступ (и удалить токен), нажмите <b>revoke</b> в списке ниже.</div>
+    <div id="guideAccount">
+      <p class="intro">Шаг 1 из 6 — войдите, чтобы создать приложение.</p>
+      <ol>
+        <li><b>Войдите</b> в аккаунт слева или создайте новый (ссылка «No account? Create one»).</li>
+      </ol>
+    </div>
+    <div id="guideApp" class="hidden">
+      <p class="intro">Шаги 2–6 — создание приложения и добавление в Authy.</p>
+      <ol>
+        <li>Укажите имя в поле <b>App name</b> (поле <b>Slug</b> можно оставить пустым — оно сгенерируется автоматически) и нажмите <b>Create app</b>.</li>
+        <li><b>Добавьте приложение в Authy:</b>
+          <ul>
+            <li>В Authy нажмите <b>+</b> (Add account).</li>
+            <li>Выберите <b>Scan QR code</b> и наведите камеру на QR-код, появившийся слева.</li>
+            <li>Если скан недоступен — <b>Enter key manually</b> и вставьте otpauth-URI или секрет.</li>
+          </ul>
+        </li>
+        <li>Скопируйте появившийся блок <code class="inline">.env</code> в конфигурацию приложения: <code class="inline">TOTP_SERVICE_URL</code>, <code class="inline">TOTP_SERVICE_USER</code>, <code class="inline">TOTP_SERVICE_PASSWORD</code>, <code class="inline">TOTP_TOKEN_ID</code>.</li>
+        <li>Приложение будет проверять 6-значные коды пользователей через <code class="inline">POST ${apiPrefix}/tokens/{id}/verify</code>.</li>
+        <li>Пароль нового приложения показывается <b>один раз</b> — сохраните его.</li>
+      </ol>
+      <div class="hint">Каждое приложение изолировано: у него свой секрет и свои коды. Код одного приложения не подойдёт для другого.</div>
+      <div class="hint">Чтобы отозвать доступ (и удалить токен), нажмите <b>revoke</b> в списке ниже.</div>
+    </div>
   </aside>
 </div>
 
@@ -160,11 +167,15 @@ const authHeaders = (json) => Object.assign(headers(json), { Authorization: 'Bea
 function showLogin() {
   $('loginView').classList.remove('hidden');
   $('mainView').classList.add('hidden');
+  $('guideAccount').classList.remove('hidden');
+  $('guideApp').classList.add('hidden');
 }
 
 function showMain(email) {
   $('loginView').classList.add('hidden');
   $('mainView').classList.remove('hidden');
+  $('guideAccount').classList.add('hidden');
+  $('guideApp').classList.remove('hidden');
   $('who').textContent = email;
   loadApps();
 }

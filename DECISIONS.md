@@ -321,6 +321,39 @@ src/lib/otpauth.ts      — парсер otpauth:// URI
   - GET /apps список, GET /ui → 200, DELETE app → 204, gate-юзер удалён (login 401 после revoke).
 - MySQL (brew) оставлен установленным, сервис остановлен. На сервер НЕ задеплоено.
 
+### Progress (2026-09-08)
+- aside.guide разделён на #guideAccount (шаг 1: войти/создать) и #guideApp (шаги 2–6:
+  Create app → добавить в Authy → скопировать .env → verify → пароль один раз + хинты),
+  #guideApp по умолчанию hidden. showLogin/showMain переключают видимость блоков —
+  показывается только релевантное текущему этапу. typecheck+build чисто (версия уже 0.1.16),
+  в отданном HTML #guideAccount виден, #guideApp скрыт; тогглы на месте. Локально; на сервер —
+  обычным циклом commit→serf→деплой.
+
+### Progress (2026-09-08)
+- INSERT выполнен на проде: App id=2 (Safe Login / safe / adminId=4 / gateUserId=3 / tokenId=2).
+  Теперь в панели (GET /totp/apps, админ id=4) приложение отображается: gateEmail
+  вычислится как safe.gate@totp.local (= реальный email gate-юзера), token 2. Сама
+  интеграция не тронута (тот же юзер и токен), revoke из панели в будущем удалит их.
+
+## 2026-09-08 — Backfill legacy Safe Login в модель App (план)
+
+- Legacy-интеграция (создана до модели App): юзер safe.gate@totp.local (id=3) + токен id=2,
+  App-таблица пустая, admin antoshkinartyom@gmail.com (id=4).
+- Одноразовый backfill на проде (одобрено юзером; без миграции — id завязаны на прод):
+  INSERT INTO App (name, slug, adminId, gateUserId, tokenId)
+  VALUES ('Safe Login', 'safe', 4, 3, 2);
+  slug 'safe' → GET /apps показывает корректный gateEmail safe.gate@totp.local.
+- Проверка: SELECT из App; поведение GET /apps уже проверено E2E. revoke из панели
+  в будущем удалит gate-юзера+токен (сломает гейт safe — ожидаемо).
+
+## 2026-09-08 — Guide: показывать только релевантное текущему этапу (план)
+
+- Русский блок-инструкция справа сейчас статичный (все 6 шагов сразу).
+- Делаю его стадиально: шаг «войти/создать аккаунт» — только на экране логина;
+  шаги «Create app → Authy → .env → verify → пароль один раз» + подсказки — только в
+  main-вью. Меняю aside.guide на два блока #guideAccount/#guideApp (hidden) и переключаю
+  их в showLogin()/showMain().
+
 ## 2026-09-08 — Инцидент: таблица App отсутствует в проде (план)
 
 ### Проблема
