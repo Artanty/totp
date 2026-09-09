@@ -605,3 +605,35 @@ src/lib/otpauth.ts      — парсер otpauth:// URI
   сменился на gate-I6VIPE5V; назад пересобрано в fallback и синкнуто;
   `npm run typecheck` чистый; элемент `.version` присутствует в бандле. Смена версии
   меняет контент-хеш gate-чанка → remoteEntry (no-cache) отдаёт свежий маппинг потребителям.
+
+## 2026-09-09 — Fix: heredoc в ssh-скрипте деплоя ломался под appleboy/ssh-action (result) — ГОТОВО
+
+- Симптом: `deploy-back.yml` ssh-шаг с `node - <<'NODE' … NODE` (merge .env) падал на ране:
+  `warning: here-document at line 7 delimited by end-of-file (wanted 'NODE')` →
+  `syntax error: unexpected end of file`. appleboy/ssh-action передаёт script построчно и
+  рвёт heredoc-терминатор.
+- Fix: heredoc заменён на однострочный `node -e "...ободная логика merge/backup, всё в одну
+  строку..."` (без комментариев), логика без изменений (union-merge: incoming побеждает,
+  legacy-ключи сохраняются, backup `.env.bak.<ts>`, incoming удаляется).
+- Проверено: YAML парсится (python yaml.safe_load); полный дословный ssh-скрипт извлечён из
+  шага и прогнан через `bash -c` в песочнице с существующим `.env` + `.env.incoming`:
+  результат `PORT=5000, DB_HOST=new-host` (incoming), `API_PREFIX, COMMIT=some message = 123`
+  (legacy) сохранены, `.env.incoming` удалён, exit 0. Деплой не запускал.
+
+## 2026-09-09 — Fix: env на сервер — просто SCP `.env`, без SERVER_ENV_B64 (result) — ГОТОВО
+
+- Юзер: «почему пересобираем env-файл, можно просто передать его?» → убрали всю
+  base64/merge-механику: `.env` из слейв-репо (на ранере) теперь уходит на сервер как есть.
+- `deploy-back.yml`:
+  - «Export .env to GitHub env» оставлен (без него нет `SSH_HOST/USER_PASS/REVERSED_PROXY_SLOT`
+    и др. для ssh/scp-шагов), но вырезан `SERVER_ENV_B64` (add-mask значения остались).
+  - «Stage deploy artifacts»: добавлено `cp .env deploy/.env` → существующий SCP-шаг
+    (garygrossgarten, `remote: ${{ env.REVERSED_PROXY_SLOT }}`) кладёт свежий .env в
+    `/root/<slot>/.env`, полностью перезаписывая старый.
+  - ssh-шаг: убран `envs: SERVER_ENV_B64` и весь if-блок (backup/decode/node merge);
+    осталось `npm ci -> prisma migrate deploy -> systemctl restart/status`.
+- Tradeoff принят юзером: .env на сервере = полный слепок из слейв-репо каждый деплой
+  (иерархия: сервер не держит «свои» ключи отдельно). Backup-копий больше не делаем.
+- Проверено: YAML парсится (10 шагов), SERVER_ENV_B64/.env.incoming/base64 в файле не
+  осталось; `dotenv` (^17.4.2) в dependencies → require('dotenv') на ранере после npm ci
+  работает.

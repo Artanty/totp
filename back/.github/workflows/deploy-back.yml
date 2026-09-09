@@ -39,9 +39,6 @@ jobs:
             out.push(`${key}=${val}`);
           }
         }
-        const envB64 = file.toString('base64');
-        console.log(`::add-mask::${envB64}`);
-        out.push(`SERVER_ENV_B64=${envB64}`);
         fs.appendFileSync(process.env.GITHUB_ENV, out.join('\n') + '\n');
         EOF
 
@@ -75,6 +72,7 @@ jobs:
         mkdir -p deploy
         cp -r dist src/generated prisma package.json package-lock.json prisma.config.ts deploy/
         cp src/generated/prisma/libquery_engine-*.so.node deploy/dist/generated/prisma/
+        cp .env deploy/.env
         ls -la deploy/dist/generated/prisma | grep libquery_engine
 
     - name: Copy folder content recursively to remote
@@ -92,32 +90,9 @@ jobs:
         host: ${{ env.SSH_HOST }}
         username: ${{ env.SSH_USER }}
         password: ${{ env.USER_PASS }}
-        envs: SERVER_ENV_B64
         script: |
           set -e
           cd /root/${{ env.REVERSED_PROXY_SLOT }}
-          if [ -n "$SERVER_ENV_B64" ]; then
-            cp .env ".env.bak.$(date +%s)" 2>/dev/null || true
-            echo "$SERVER_ENV_B64" | base64 -d > .env.incoming
-            node - <<'NODE'
-              const fs = require('fs');
-              function parse(text) {
-                const entries = [];
-                for (const line of text.split(/\r?\n/)) {
-                  const t = line.trim();
-                  if (!t || t.startsWith('#') || !t.includes('=')) continue;
-                  const i = line.indexOf('=');
-                  entries.push([line.slice(0, i).trim(), line.slice(i + 1)]);
-                }
-                return entries;
-              }
-              const map = new Map();
-              for (const [k, v] of parse(fs.existsSync('.env') ? fs.readFileSync('.env', 'utf8') : '')) map.set(k, v);
-              for (const [k, v] of parse(fs.readFileSync('.env.incoming', 'utf8'))) map.set(k, v);
-              fs.writeFileSync('.env', [...map].map(([k, v]) => `${k}=${v}`).join('\n') + '\n');
-              fs.unlinkSync('.env.incoming');
-            NODE
-          fi
           npm ci --omit=dev
           npx --yes prisma@6.19.3 migrate deploy
           systemctl restart ${{ env.REVERSED_PROXY_SLOT }}
