@@ -93,7 +93,7 @@ jobs:
         script: |
           set -e
           cd /root/${{ env.REVERSED_PROXY_SLOT }}
-          npm ci --omit=dev
+          npm install --omit=dev --no-audit --no-fund
           npx --yes prisma@6.19.3 migrate deploy
           systemctl restart ${{ env.REVERSED_PROXY_SLOT }}
           systemctl --no-pager --lines=5 status ${{ env.REVERSED_PROXY_SLOT }}
