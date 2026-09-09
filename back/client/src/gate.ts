@@ -29,6 +29,9 @@ export const DEFAULT_TEXTS: TotpGateTexts = {
 const DIGIT_COUNT = 6;
 const ELEMENT_NAME = 'safe-totp-gate';
 
+declare const TOTP_GATE_VERSION: string | undefined;
+const GATE_VERSION = TOTP_GATE_VERSION ?? '0.0.0.0.0.0';
+
 const DEFAULT_LOGO = `data:image/svg+xml;utf8,${encodeURIComponent(`
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" fill="none">
   <rect width="64" height="64" rx="14" fill="#2c6df6"/>
@@ -223,6 +226,7 @@ export class TotpGateElement extends HTMLElement {
           background: var(--bg-widget, #141823);
           text-align: center;
           box-sizing: border-box;
+          position: relative;
         }
         .logo {
           width: 56px;
@@ -297,6 +301,16 @@ export class TotpGateElement extends HTMLElement {
           animation: totp-spin 0.8s linear infinite;
         }
         @keyframes totp-spin { to { transform: rotate(360deg); } }
+        .version {
+          position: absolute;
+          bottom: 8px;
+          right: 14px;
+          color: var(--text-muted, #8b93a7);
+          font-size: 10px;
+          line-height: 1.4;
+          font-family: var(--font, inherit);
+          user-select: none;
+        }
         .hidden { display: none; }
       </style>
       <div class="gate">
@@ -311,6 +325,7 @@ export class TotpGateElement extends HTMLElement {
             <button class="refresh-btn" type="button"></button>
           </div>
           <p class="error hidden"></p>
+          <div class="version">${GATE_VERSION}</div>
         </div>
       </div>
     `;

@@ -568,3 +568,40 @@ src/lib/otpauth.ts      — парсер otpauth:// URI
 - Эффект на следующем деплое: dotenv на сервере подхватит все env из слейв-репо (safe envs +
   basic serf), /get-updates вернёт version/commit_message/project_id/namespace/slave_repo.
 - Деплой не запускал.
+
+## 2026-09-09 — VersionDisplay в totp gate (badge версии проекта, внутри карточки) (план)
+
+- Требование: как React `VersionDisplay` (process.env.TAG_VERSION || fallback), но в
+  шаримом totp-компоненте (`safe-totp-gate`), чистый HTML/CSS в shadow DOM.
+  Позиция: правый нижний угол КАРТОЧКИ (юзер уточнил «inside the card»).
+  Fallback: 6 нулей `0.0.0.0.0.0` (показывать всегда). Версия — totp-проекта (git_tag serf).
+- Механика: статичный бандл не имеет server-side process.env → версия запекается на этапе
+  сборки: esbuild `define: { TOTP_GATE_VERSION: JSON.stringify(TAG_VERSION ?? '0.0.0.0.0.0') }`.
+  В CI `Export .env` уже кладёт TAG_VERSION в env ДО `npm run build` → свежий тег каждый деплой.
+- Файлы:
+  1. `back/client/src/gate.ts`: `declare const TOTP_GATE_VERSION`; `GATE_VERSION =
+     TOTP_GATE_VERSION ?? '0.0.0.0.0.0'`; в template() внутри `.card` →
+     `<div class="version">${GATE_VERSION}</div>`; `.card { position: relative; }` +
+     `.version { position:absolute; bottom:8px; right:14px; color: var(--text-muted,#8b93a7);
+     font-size:10px; line-height:1.4; font-family: var(--font,inherit); user-select:none; }`.
+  2. `back/client/build.mjs`: добавить `define` в esbuild options.
+- Cache-эффект: смена версии меняет контент-хеш gate-чанка → новый файл; remoteEntry
+  revalidate (no-cache) → потребители подхватят свежую версию после деплоя.
+- Проверка: `npm run client:sync` (без TAG_VERSION → в бандле 0.0.0.0.0.0); пересборка с
+  `TAG_VERSION=v9.9.9` → литерал подменился, хеш изменился.
+
+### Result (2026-09-09) — ГОТОВО
+- `client/src/gate.ts`: добавлены `declare const TOTP_GATE_VERSION` и
+  `const GATE_VERSION = TOTP_GATE_VERSION ?? '0.0.0.0.0.0';`; в template() внутри `.card`
+  добавлен `<div class="version">${GATE_VERSION}</div>`; `.card` → `position: relative`;
+  новый `.version { position:absolute; bottom:8px; right:14px; ... font-size:10px;
+  line-height:1.4; color: var(--text-muted,#8b93a7); user-select:none; }`.
+- `client/build.mjs`: esbuild option `define: { TOTP_GATE_VERSION:
+  JSON.stringify(process.env.TAG_VERSION ?? '0.0.0.0.0.0') }` — литерал встраивается на
+  сборке, в бандл не попадает `process` из рантайма. В CI Export .env идёт до Build,
+  поэтому тег serf (git_tag) запекается свежим каждый деплой.
+- Проверено: `npm run client:sync` без TAG_VERSION → `0.0.0.0.0.0` в бандле
+  (gate-OAJGDPZ3); `TAG_VERSION=v9.9.9 npm run client:build` → `v9.9.9` на месте и хеш
+  сменился на gate-I6VIPE5V; назад пересобрано в fallback и синкнуто;
+  `npm run typecheck` чистый; элемент `.version` присутствует в бандле. Смена версии
+  меняет контент-хеш gate-чанка → remoteEntry (no-cache) отдаёт свежий маппинг потребителям.

@@ -22,6 +22,9 @@ await build({
   sourcemap: true,
   metafile: false,
   minify: true,
+  define: {
+    TOTP_GATE_VERSION: JSON.stringify(process.env.TAG_VERSION ?? '0.0.0.0.0.0'),
+  },
   plugins: [moduleFederationPlugin(federationConfig)],
 });
 
