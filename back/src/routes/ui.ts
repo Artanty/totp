@@ -334,6 +334,24 @@ async function uiRoutes(app: FastifyInstance): Promise<void> {
       .type(mimeType)
       .send(data);
   });
+
+  app.get('/client/:file', async (request, reply) => {
+    const params = request.params as { file: string };
+    if (!/^[A-Za-z0-9_.-]+\.(js|map)$/.test(params.file)) {
+      return reply.code(404).send({ error: 'Not Found' });
+    }
+    let data: Buffer;
+    try {
+      data = readFileSync(new URL(`../public/client/${params.file}`, import.meta.url));
+    } catch {
+      return reply.code(404).send({ error: 'Not Found' });
+    }
+    return reply
+      .header('Cache-Control', 'public, max-age=31536000, immutable')
+      .header('Access-Control-Allow-Origin', '*')
+      .type(params.file.endsWith('.map') ? 'application/json' : 'application/javascript')
+      .send(data);
+  });
 }
 
 export default uiRoutes;

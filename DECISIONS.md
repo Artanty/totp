@@ -435,9 +435,38 @@ src/lib/otpauth.ts      — парсер otpauth:// URI
 - План: вместо curl-подсказки добавить в login-вью (src/routes/ui.ts) inline-форму регистрации:
   тумблер "No account? Create one" → появляется поле confirm password, кнопка становится
   "Create account", submit → POST {prefix}/auth/register → JWT сразу в localStorage + showMain.
-- Done: тумблер/режим `authMode` (login|register), `setAuthMode()`, `submitAuth()` с валидацией
+- Done: тумблер/режим `authMode` (login|register), `setAuthMode()`, submitAuth() с валидацией
   email/password>=8/совпадение confirm; 409 → переключение в login с пояснением; Enter во всех полях;
   logout сбрасывает режим. Бэкенд не менялся (register уже отдаёт {token,user}).
 - Проверено: typecheck+build чисто; рантайм-рендер страницы ок (BASE=/totp, title TOTP, все элементы
   есть; URL строится динамически '/auth/'+mode).
 - НЕ задеплоено: выйдет после commit->push->serf->деплой.
+
+## 2026-09-09 — Safe TOTP gate component переезжает в totp/back (план)
+
+- Требование юзера: компонент (MF remote, сейчас в `ui/web/totp`) должен жить ВНУТРИ `totp/back`,
+  чтобы его можно было отдавать по URL в проде: buildится самим totp/back и сервится им.
+- Из-за этого `TOTP_URL` в safe/web = `https://host<api_prefix>/client` (например `/totp/client`).
+  Верификация идёт как раньше: обёртка только грузит remoteEntry.js оттуда, baseUrl остаётся SAFE_BACK_URL (relay).
+- План:
+  1. `mv ui/web/totp → totp/back/client` (перенос источника; node_modules/dist остаются, они в .gitignore).
+  2. `client/package.json`: убрать devDeps (переносятся в back), оставить метаданные+скрипты; `build.mjs` — пути от `import.meta.url` (независимо от cwd).
+  3. `back/package.json`: devDeps + `esbuild@^0.25.0`, `@module-federation/esbuild@^0.0.114`; скрипты `client:build`, `client:sync`; `build` = `prisma generate && npm run client:sync && tsc && cp -r src/public dist/public`.
+  4. `back/scripts/sync-client.mjs`: копирует `client/dist/*` → `src/public/client/` (CI заберёт папку в dist/public).
+  5. `back/src/routes/ui.ts`: маршрут `GET <prefix>/client/:file` (только `.js`, без traversal) из `src/public/client` (dev) / `dist/public/client` (prod); `Cache-Control: public, max-age=31536000, immutable`; `Access-Control-Allow-Origin: *` (кросс-оригин ESM из safe/web).
+  6. `back/src/app.ts`: `${apiPrefix}/client` в request-log skip.
+  7. Проверка: client build + sync → файлы в src/public/client; `npm run typecheck` в back; safe/web не меняет логику (TOTP_URL уже читается).
+- На сервер НЕ деплою (push только по явному запросу).
+
+## 2026-09-09 — Safe TOTP gate component переезжает в totp/back (progress)
+
+- СДЕЛАНО: `ui/web/totp` → `totp/back/client` (источник remote теперь в репо totp; node_modules/dist в .gitignore).
+- `client/package.json`: остались имя/scripts (`build`=`node build.mjs`), devDeps удалены → тулинг живёт в back/ (esbuild + @module-federation/esbuild), резолвится из back/node_modules; stale client/package-lock.json удалён.
+- `client/build.mjs`: пути теперь от `import.meta.url` (независимо от cwd), остальное без изменений (тот же import-maps strip).
+- `back/package.json`: devDeps + `esbuild@^0.25.0`, `@module-federation/esbuild@^0.0.114`; scripts `client:build`, `client:sync`; `build` теперь = `prisma generate && npm run client:sync && tsc && cp -r src/public dist/public`.
+- `back/scripts/sync-client.mjs` (новый): очищает `src/public/client`, копирует `client/dist/*.{js,map}` → `src/public/client`.
+- `back/src/routes/ui.ts`: `GET <prefix>/client/:file` — whitelist `/^[A-Za-z0-9_.-]+\.(js|map)$/`, readFileSync через import.meta.url (dev src/public/client / prod dist/public/client), `Cache-Control: public, max-age=31536000, immutable`, `Access-Control-Allow-Origin: *` (кросс-оригин ESM), MIME application/javascript / application/json. 404 на traversal/отсутствие.
+- `back/src/app.ts`: `${apiPrefix}/client` добавлен в request-log skip.
+- Проверено: `npm run typecheck` чистый; `npm run build` чистый (prisma generate + client sync + tsc + cp public). Прода-смоук из `node dist/index.js` (PORT=3997/3998): get `/totp/client/remoteEntry.js` → 200 application/javascript 88KB; `gate-7ZQB3ALY.js` → 200 application/javascript; traversal `/totp/client/../../favicon/favicon.ico` → 404; отсутствующий файл → 404; заголовки: cache-control 31536000 immutable, access-control-allow-origin: *, content-type application/javascript.
+- Деплой-заметки: CI собирает на свежем checkout → dist чистый (вложенность `public/public` от повторных локальных `cp -r` — только локальный артефакт). `client/` внутри back/ уедет в slave-репо; на сервере рантайм получает только dist/public/client (сборка на сервере не запускается, devDeps не ставятся). Хеши remote-файлов те же, что в предыдущем проверенном смоуке (core-353AIF74, gate-7ZQB3ALY, chunk-*).
+- safe/web НЕ менял: обёртка продолжает читать TOTP_URL; прод TOTP_URL = `https://host/totp/client`. Dev-фолбэк `safe/web/public/totp` и старый `dev:sync` теперь легаси (remote больше не живёт в ui/).

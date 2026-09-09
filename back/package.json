@@ -1,13 +1,15 @@
 {
   "name": "totp",
-  "version": "0.1.17",
+  "version": "0.1.18",
   "description": "Authy-like TOTP token manager service",
   "private": true,
   "type": "module",
   "main": "dist/index.js",
   "scripts": {
     "dev": "tsx watch src/index.ts",
-    "build": "prisma generate && tsc && cp -r src/public dist/public",
+    "build": "prisma generate && npm run client:sync && tsc && cp -r src/public dist/public",
+    "client:build": "npm --prefix client run build",
+    "client:sync": "npm run client:build && node scripts/sync-client.mjs",
     "start": "node dist/index.js",
     "typecheck": "tsc --noEmit"
   },
@@ -20,9 +22,11 @@
     "qrcode": "^1.5.4"
   },
   "devDependencies": {
+    "@module-federation/esbuild": "^0.0.114",
     "@types/bcryptjs": "^2.4.6",
     "@types/node": "^20.19.43",
     "@types/qrcode": "^1.5.6",
+    "esbuild": "^0.25.0",
     "prisma": "^6.19.3",
     "tsx": "^4.23.13",
     "typescript": "^5.9.3"
