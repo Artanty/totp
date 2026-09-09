@@ -32,7 +32,9 @@ const ELEMENT_NAME = 'safe-totp-gate';
 const DEFAULT_LOGO = `data:image/svg+xml;utf8,${encodeURIComponent(`
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" fill="none">
   <rect width="64" height="64" rx="14" fill="#2c6df6"/>
-  <path d="M32 12a12 12 0 0 1 12 12v6h2a4 4 0 0 1 4 4v16a4 4 0 0 1-4 4H22a4 4 0 0 1-4-4V34a4 4 0 0 1 4-4h2v-6a12 12 0 0 1 8-11.3A12 12 0 0 1 32 12Zm4 18V24a4 4 0 0 0-8 0v6h8Zm-4 8a4 4 0 0 0-2 7.5v4.5h4v-4.5a4 4 0 0 0-2-7.5Z" fill="#fff"/>
+  <g transform="translate(10 1.75) scale(0.1833) translate(-60 -70)" fill="#fff">
+    <path d="M90 400l180 0q13 0 21-9 9-8 9-21l0-150q0-13-9-21-8-9-21-9l0-30q-1-38-26-64-24-25-62-26-40 1-65 26-26 26-27 64l0 30q-13 0-21 9-9 8-9 21l0 150q0 13 9 21 8 9 21 9l0 0z m40-180l0-60q1-22 15-36 14-14 35-14 22 0 36 14 14 14 14 36l0 60-100 0z"/>
+  </g>
 </svg>`)}`;
 
 export class TotpGateElement extends HTMLElement {

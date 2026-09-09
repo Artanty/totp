@@ -289,9 +289,10 @@ src/lib/otpauth.ts      — парсер otpauth:// URI
   ошибки в error.log (пароль замаскирован ***REDACTED***), get-updates отдаёт
   [logs,envs,version..slave] (undefined-пропсы пропускаются — как express res.json),
   одна запись на запрос (404 тоже), /get-updates из request-лога исключён.
-- НЕ задеплоено: на сервере выйдет после commit->push->serf->деплой. Также serf-эnv
-  для totp пока не отдаёт TAG_VERSION/COMMIT/PROJECT_ID/NAMESPACE/SLAVE_REPO —
-  вернутся как undefined, если не добавить в safe envs.
+- НЕ задеплоено: на сервере выйдет после commit->push->serf->деплой. serf уже отдаёт
+  TAG_VERSION/COMMIT/PROJECT_ID/NAMESPACE/SLAVE_REPO в слейв-.env (базовые для всех
+  проектов); на сервере они появлялись как undefined, потому что .env не уезжал на
+  сервер — исправлено 2026-09-09 (доставка всех env при деплое, см. ниже).
 
 ### Progress (2026-09-08)
 - План записан выше. Начинаю реализацию: schema → миграция → lib → routes → app.ts → UI → проверка.
@@ -469,4 +470,101 @@ src/lib/otpauth.ts      — парсер otpauth:// URI
 - `back/src/app.ts`: `${apiPrefix}/client` добавлен в request-log skip.
 - Проверено: `npm run typecheck` чистый; `npm run build` чистый (prisma generate + client sync + tsc + cp public). Прода-смоук из `node dist/index.js` (PORT=3997/3998): get `/totp/client/remoteEntry.js` → 200 application/javascript 88KB; `gate-7ZQB3ALY.js` → 200 application/javascript; traversal `/totp/client/../../favicon/favicon.ico` → 404; отсутствующий файл → 404; заголовки: cache-control 31536000 immutable, access-control-allow-origin: *, content-type application/javascript.
 - Деплой-заметки: CI собирает на свежем checkout → dist чистый (вложенность `public/public` от повторных локальных `cp -r` — только локальный артефакт). `client/` внутри back/ уедет в slave-репо; на сервере рантайм получает только dist/public/client (сборка на сервере не запускается, devDeps не ставятся). Хеши remote-файлов те же, что в предыдущем проверенном смоуке (core-353AIF74, gate-7ZQB3ALY, chunk-*).
-- safe/web НЕ менял: обёртка продолжает читать TOTP_URL; прод TOTP_URL = `https://host/totp/client`. Dev-фолбэк `safe/web/public/totp` и старый `dev:sync` теперь легаси (remote больше не живёт в ui/).
+- safe/web НЕ менял: обёртка продолжает читать TOTP_URL; прод TOTP_URL = `https://host/totp/client`. Dev-фолбэк `safe/web/public/totp` и старый `dev:sync` теперь легаси (remote больше не живёт в ui/.
+
+## 2026-09-09 — Deploy: гарантировать сборку totp client + отдачу свежей версии (план)
+
+- Требование юзера: на следующем деплое код totp-компонента (MF remote) обязан быть
+  собран и готов к запросу из другого приложения (safe/web через TOTP_URL).
+- Диагноз: `npm run build` уже включает `npm run client:sync` (build→src/public/client→
+  dist/public/client), и "Stage deploy artifacts" пакетирует dist → файлы уезжают на сервер.
+  Но CI не верифицирует артефакт клиента явно, а `/totp/client/remoteEntry.js` отдаётся с
+  `Cache-Control: public, max-age=31536000, immutable` — статичное имя файла → браузер
+  потребителя держит СТАРЫЙ remoteEntry и после деплоя просит старые хешированные чанки
+  (gate-*.js), которых на сервере уже нет (dist заменён целиком) → 404, компонент ломается.
+- План:
+  1. `back/.github/workflows/deploy-back.yml`: после Build добавить шаг "Verify totp client
+     component" — проверить наличие `dist/public/client/remoteEntry.js` и газетных чанков,
+     вывести список (fail-fast, если remote не собрался — деплой не поедет).
+  2. `back/src/routes/ui.ts`: для `remoteEntry.js` отдавать `Cache-Control: no-cache`
+     (revalidate при каждом запросе потребителя — подхватит свежий entry со свежими
+     хешами чанков после каждого деплоя); хешированные чанки (gate/core/chunk-*.js)
+     оставить immutable — они меняют имя при каждом билде. Requires-заголовок/не трогаем.
+  3. Проверка: `npm run build` чистый; смоук `/totp/client/remoteEntry.js` → 200,
+     cache-control no-cache; `gate-*.js` → immutable; деплой не запускаю.
+
+### Result (2026-09-09) — ГОТОВО
+- `deploy-back.yml`: после Build добавлен шаг "Verify totp client component is built" —
+  `test -f dist/public/client/remoteEntry.js` + проверка `core-*.js gate-*.js chunk-*.js`,
+  fail-fast при отсутствии (remote не собрался → деплой не поедет), вывод списка файлов.
+- `ui.ts` `/totp/client/:file`: `remoteEntry.js` → `Cache-Control: public, no-cache`;
+  остальные (gate/core/chunk + их .map) → по-прежнему `max-age=31536000, immutable`.
+  Теперь потребитель (safe/web) при каждом обращении revalidate-ит entry и после деплоя
+  подхватывает свежий маппинг хешированных чанков — старая immutable-копия entry больше
+  не вешает компонент на 404 от прежних чанков.
+- Проверено: `npm run typecheck` чистый; `npm run build` чистый; shasum client/dist ==
+  src/public/client == dist/public/client (artefact консистентен). Смоук `node dist/index.js`
+  (PORT=3399): `GET /totp/client/remoteEntry.js` → 200 `cache-control: public, no-cache`;
+  `GET /totp/client/gate-7ZQB3ALY.js` → 200 `cache-control: public, max-age=31536000, immutable`.
+- На сервер НЕ задеплоено (push только по явному запросу).
+
+## 2026-09-09 — Иконка замка TOTP gate → microns mu-lock (план)
+
+- Требование: заменить иконку-замок в TOTP gate на `mu-lock` из microns
+  (https://www.s-ings.com/projects/microns-icon-font/, класс `.mu-lock`, glyph \E735).
+- Источник: raw SVG https://raw.githubusercontent.com/stephenhutchings/microns/master/svg/lock.svg
+  (viewBox 360x480). Bbox содержимого: 240x330 (x:60..300, y:70..400) — посчитан скриптом.
+- Место правки: `back/client/src/gate.ts` → `DEFAULT_LOGO` (сейчас кастомный padlock на
+  синем бейдже 64x64 rx=14, #2c6df6). Меняем только path glyph’а, бейдж и стиль сохраняем.
+- Трансформ: `translate(10 1.75) scale(0.1833) translate(-60 -70)` → иконка 44x60.5
+  по центру бейджа (симметричные поля ~10px по X, ~1.75px по Y).
+- Кодирование: как сейчас (`data:image/svg+xml;utf8,${encodeURIComponent(...)}`).
+- После правки: `npm run client:sync` (обновить src/public/client), typecheck;
+  деплой не запускаю.
+
+### Result (2026-09-09) — ГОТОВО
+- `gate.ts` `DEFAULT_LOGO`: padlock-иллюстрация заменена на glyph microns `lock` (mu-lock),
+  path из svg/lock.svg (viewBox 360x480), в синем бейдже 64x64 rx=14 (#2c6df6), белый
+  символ, transform `translate(10 1.75) scale(0.1833) translate(-60 -70)` (bitt: 44x60.5,
+  центрировано). Кодирование то же (`data:image/svg+xml;utf8,`+encodeURIComponent).
+- Bbox glyph’а проверен скриптом (x:60..300, y:70..400, w240 h330); SVG предпросмотрен.
+- Пересобрано: `npm run client:sync` → новый хеш `gate-5F4XLKN6.js` (вместо 7ZQB3ALY),
+  синкнуто в src/public/client; `npm run typecheck` чистый; путь `M90 400l180 0q13`
+  присутствует в собранном бандле и в src/public/client.
+- Деплой не запускал.
+
+## 2026-09-09 — Deploy: доставить на сервер ВСЕ env из serf (в т.ч. basic-переменные) (план)
+
+- Проблема: на `/totp/get-updates` не видно version/commit_message/project_id/namespace/
+  slave_repo — process.env.TAG_VERSION/COMMIT/PROJECT_ID/NAMESPACE/SLAVE_REPO пусты,
+  Fastify их дропает (undefined-ключи не попадают в JSON).
+- Причина: эти 6 переменных пишет serf (`.github/workflows/deploy.yml:246-251`) в `.env`
+  СЛЕЙВ-репо (используется CI), но deploy-back.yml НЕ везёт `.env` на сервер
+  (/root/totp/.env намеренно «нетронутый»), а рантайм читает dotenv из server-файла.
+- Решение (юзер подтвердил «provide all the envs»): при каждом деплое доставлять ВЕСЬ
+  слейв-`.env` на сервер и мержить с текущим (новые значения побеждают, legacy-только
+  ключи сохраняются) → basic-переменные из serf теперь попадают в рантайм.
+- План:
+  1. Шаг «Export .env to GitHub env»: дополнительно b64 всего файла → `SERVER_ENV_B64`
+     в GITHUB_ENV (::add-mask::).
+  2. appleboy/ssh-action: `envs: SERVER_ENV_B64`.
+  3. ssh-скрипт перед `npm ci`: `cp .env .env.bak.<ts>` → `base64 -d > .env.incoming` →
+     node-мерж (Map, сервер-база + incoming поверх, ключи без значений не теряются,
+     split по первому `=` — значения с пробелами/`=` ок) → переписать .env, удалить `.env.incoming`.
+  4. Проверка: YAML валиден; экспорт+round-trip b64 локально; merge-логика протестирована.
+
+## 2026-09-09 — Deploy: все env из serf на сервер (result) — ГОТОВО
+
+- `deploy-back.yml` обновлён:
+  - «Export .env» пишет ещё и `SERVER_ENV_B64` (base64 всего .env, masked).
+  - ssh-шаг принимает `envs: SERVER_ENV_B64`; перед `npm ci` делает backup `.env.bak.<ts>`,
+    декодирует incoming и мержить union (incoming побеждает, отсутствующие в incoming
+    legacy-ключи сервера сохраняются), затем continue как раньше.
+- Проверено: YAML OK (python yaml.safe_load); экспорт-шаг локально сгенерил SERVER_ENV_B64
+  (round-trip декод = исходный .env из 7 строк); merge-тест: PORT/DB_HOST перезаписаны
+  incoming, API_PREFIX/TOTP_MASTER_KEY (только в базе) сохранены, `COMMIT=some message = 123`
+  корректен; базовые serf-переменные (PROJECT_ID/NAMESPACE/SLAVE_REPO/COMMIT/TAG_VERSION/STAT_URL)
+  добавляются.
+- Эффект на следующем деплое: dotenv на сервере подхватит все env из слейв-репо (safe envs +
+  basic serf), /get-updates вернёт version/commit_message/project_id/namespace/slave_repo.
+- Деплой не запускал.

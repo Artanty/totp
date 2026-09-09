@@ -346,8 +346,9 @@ async function uiRoutes(app: FastifyInstance): Promise<void> {
     } catch {
       return reply.code(404).send({ error: 'Not Found' });
     }
+    const isEntry = params.file === 'remoteEntry.js';
     return reply
-      .header('Cache-Control', 'public, max-age=31536000, immutable')
+      .header('Cache-Control', isEntry ? 'public, no-cache' : 'public, max-age=31536000, immutable')
       .header('Access-Control-Allow-Origin', '*')
       .type(params.file.endsWith('.map') ? 'application/json' : 'application/javascript')
       .send(data);
