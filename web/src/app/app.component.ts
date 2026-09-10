@@ -27,7 +27,7 @@ import { AdminComponent } from './admin/admin.component';
 })
 export class AppComponent {
   constructor(public auth: AuthService, private admin: AdminService) {
-    const base = (document.querySelector('base')?.getAttribute('href') ?? '').replace(/\/$/, '');
+    const base = (WEB_BACK_URL || (document.querySelector('base')?.getAttribute('href') ?? '')).replace(/\/+$/, '');
     auth.configure(base || '/totp');
     admin.configure(base || '/totp');
   }

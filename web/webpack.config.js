@@ -22,6 +22,7 @@ module.exports = (config) => {
     ...mfConfig.plugins,
     new webpack.DefinePlugin({
       TOTP_GATE_VERSION: JSON.stringify(process.env.TAG_VERSION || '0.0.0.0.0.0'),
+      WEB_BACK_URL: JSON.stringify(process.env.BACK_URL || ''),
     }),
   ];
   config.optimization = config.optimization || {};

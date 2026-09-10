@@ -1,0 +1,140 @@
+name: Deploy web to server
+
+on:
+  push:
+    branches:
+      - main
+  workflow_dispatch:
+
+jobs:
+  build-and-deploy:
+    runs-on: ubuntu-latest
+
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+
+    - name: Set up Node.js
+      uses: actions/setup-node@v4
+      with:
+        node-version: '20'
+
+    - name: Install dependencies
+      run: npm ci
+
+    - name: Export .env to GitHub env
+      run: |
+        node - <<'EOF'
+        const fs = require('fs');
+        const { parse } = require('dotenv');
+        if (!fs.existsSync('.env')) throw new Error('.env not found in checkout');
+        const file = fs.readFileSync('.env');
+        const parsed = parse(file);
+        const out = [];
+        for (const [key, val] of Object.entries(parsed)) {
+          if (/[\n\r]/.test(val)) {
+            out.push(`${key}<<EOF\n${val}\nEOF`);
+          } else {
+            console.log(`::add-mask::${val}`);
+            out.push(`${key}=${val}`);
+          }
+        }
+        fs.appendFileSync(process.env.GITHUB_ENV, out.join('\n') + '\n');
+        EOF
+
+    - name: Validate required env
+      run: |
+        if [ "$REVERSED_PROXY_SLOT" != "totp-web" ]; then
+          echo "REVERSED_PROXY_SLOT must be 'totp-web' (got '$REVERSED_PROXY_SLOT'); refusing to target the back slot." >&2
+          exit 1
+        fi
+        missing=""
+        for k in SSH_HOST SSH_USER USER_PASS; do
+          if [ -z "${!k}" ]; then missing="$missing $k"; fi
+        done
+        if [ -n "$missing" ]; then
+          echo "Missing env vars; add them to project envs in safe and re-run serf:$missing" >&2
+          exit 1
+        fi
+
+    - name: Build
+      run: npm run build
+
+    - name: Verify web artifacts
+      run: |
+        ls -la dist/web
+        test -f dist/web/remoteEntry.js
+        test -f dist/web/index.html
+        ls dist/web/main.*.js >/dev/null
+        ls dist/web/styles.*.css >/dev/null
+
+    - name: Stage deploy artifacts
+      run: |
+        rm -rf deploy
+        mkdir -p deploy
+        cp -r dist/web/* deploy/
+        ls -la deploy
+
+    - name: Prepare remote slot directory
+      uses: appleboy/ssh-action@master
+      with:
+        host: ${{ env.SSH_HOST }}
+        username: ${{ env.SSH_USER }}
+        password: ${{ env.USER_PASS }}
+        script: |
+          set -e
+          cd /root
+          rm -rf totp-web.new
+          mkdir -p totp-web.new
+
+    - name: Copy folder content recursively to remote
+      uses: garygrossgarten/github-action-scp@release
+      with:
+        local: ./deploy
+        remote: ${{ env.REVERSED_PROXY_SLOT }}.new
+        host: ${{ env.SSH_HOST }}
+        username: ${{ env.SSH_USER }}
+        password: ${{ env.USER_PASS }}
+
+    - name: Swap slot, configure nginx, smoke test
+      uses: appleboy/ssh-action@master
+      with:
+        host: ${{ env.SSH_HOST }}
+        username: ${{ env.SSH_USER }}
+        password: ${{ env.USER_PASS }}
+        script: |
+          set -e
+          cd /root
+          rm -rf totp-web.swap
+          if [ -d totp-web ]; then mv totp-web totp-web.swap; fi
+          mv totp-web.new totp-web
+          rm -rf totp-web.swap
+          ls -la /root/totp-web | head -20
+
+          CONF=/etc/nginx/sites-enabled/default
+          if ! grep -qF "location /totp-web/" "$CONF"; then
+            cp "$CONF" "$CONF.bak.$(date +%s)"
+            cat >> "$CONF" <<'NGINXEOF'
+
+          # TOTP web (Angular MF remote) - managed by deploy-web.yml
+          location /totp-web/ {
+              root /root;
+              index index.html;
+              try_files $uri $uri/ /totp-web/index.html;
+              location ~ /totp-web/(remoteEntry\.js|index\.html)$ {
+                  add_header Cache-Control "no-cache";
+              }
+              location ~ /totp-web/[^?]*\.(js|css|ico|png|svg|webmanifest|txt)$ {
+                  add_header Cache-Control "public, max-age=31536000, immutable";
+              }
+          }
+          NGINXEOF
+            nginx -t
+          fi
+
+          nginx -t
+          systemctl reload nginx
+
+          echo "Remote entry check:"
+          curl -sk -o /dev/null -w 'status=%{http_code} type=%{content_type}\n' \
+            https://127.0.0.1/totp-web/remoteEntry.js -H 'Host: pomi-doro.ru'

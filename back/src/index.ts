@@ -6,7 +6,6 @@ const port = Number(process.env.PORT ?? 3000);
 
 const app = buildApp();
 
-
 async function start(): Promise<void> {
   const service_started_at = new Date().toISOString();
   console.log('[START] ' + service_started_at.replace('T', ' ').split('.')[0]);

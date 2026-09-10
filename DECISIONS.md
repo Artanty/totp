@@ -735,3 +735,206 @@ src/lib/otpauth.ts      — парсер otpauth:// URI
 - `back/client/src/gate.ts`: `.version { bottom: 8px; right: 14px }` → `bottom: 4px; right: 4px`.
 - Пересобрано: `npm run client:sync` (новый хеш gate-TMGMEBL2.js, синк в src/public/client),
   `npm run typecheck` чистый. На сервер не деплою.
+
+## 2026-09-10 — Лого: единый источник `back/src/assets/logo.ts` (план+done)
+
+- Требование: `logo.ts` в одном месте, чтобы favicon-скрипт, client-remote и будущий web
+  использовали один файл. `back/assets/logo.ts` переехал в `back/src/assets/logo.ts`;
+  `back/client/src/logo.ts` стал re-export’ом (`export * from '../../src/assets/logo'`).
+  Команда favicon: `npm run generate-favicons -- src/assets/logo.ts`. typecheck + client:sync чистые.
+
+## 2026-09-10 — Web-фронтенд переезжает в отдельный Angular-проект `web/` (план)
+
+- Требование юзера: «сделать отдельный проект для web», Angular 19+, оставить Module Federation
+  remote (`totp-core`, `totp-gate`) + перенести админку (gate + admin UI), full rewrite.
+- Решение: новый standalone-проект `web/` (Angular 19.2). MF через
+  `@angular-architects/module-federation@19.0.3` + `@angular-builders/custom-webpack@19`
+  (билдер `module-federation:build` в v19 — no-op плейсхолдер, поэтому custom-webpack browser).
+- Контракт remotes (совместимость с safe/web `totp-auth.service.ts`):
+  - `./totp-core` → `createTotpSession(config)` + типы из `core/totp-session.service.ts`
+    (factory, port старого `client/src/core.ts`), само-содержимый, без Angular.
+  - `./totp-gate` → `registerTotpGate()` из `gate/gate.module.ts` (Angular Elements,
+    `createCustomElement(GateComponent)` → `<safe-totp-gate>`), инпут `baseUrl`/`session`/`logo`/`texts`,
+    output `totpUnlocked`→`totp-unlocked`. Injector: приложение тоtp (main.ts stash) либо
+    fallback `createApplication()` (когда remote грузится хостом без bootstrapping’а).
+  - `shared: {}` (self-contained, как старый esbuild remote) — initial bundle крупный (~3.4MB).
+- Админка: `auth/` (AuthService + LoginComponent: login/register с тумблером как в старом ui.ts),
+  `admin/` (AdminService + AdminComponent: create app, QR + .env block, список, revoke, гайд).
+  База API из `<base href>` или fallback `/totp`.
+
+## 2026-09-10 — Angular-веб собран + пайплайн переведён на web.jsbundle (progress)
+
+- `web/` собран: Angular 19, gate-компонент со ShadowDom (`ViewEncapsulation.ShadowDom`).
+  remoteEntry.js exposes `./totp-core` (общий chunk) и `./totp-gate` (асинхронный 183-чанк,
+  Angular сам-содержимо; admin/login в main остаются изолированно). Build чистый.
+- `webpack.config.js`: `output.publicPath = ${apiPrefix}/web/` (chunks грузятся с `/totp/web/`).
+- Известное ограничение: `optimization` в production отключён (`Unexpected "export"` от esbuild
+  на ESM remoteEntry — известный конфликт MF+minify; зафлагано как TODO).
+- `back/scripts/sync-web.mjs` (новый): `npm --prefix ../web run build` → копирование
+  `web/dist/web/*` → `back/src/public/web/` → рерайт `index.html` (base href=`/totp/`,
+  favicon links на `/totp/favicon/*`, asset src на `/totp/web/*`, title «TOTP · apps»).
+- `back/src/routes/ui.ts`: `/ui` отдаёт скопированный index.html (no-cache), новый
+  `/web/:file` (как старый `/client/:file`: whitelist, MIME, remoteEntry no-cache, остальное
+  immutable + CORS). `/favicon/:file` и `/client/:file` (legacy) оставлены.
+- `back/src/app.ts`: `/web` добавлен в log-skip; `urls.web`/`urls.remoteEntry` →
+  `/totp/web/...`.
+- `back/package.json`: `client:build`/`client:sync` → `web:build`/`web:sync`;
+  `build` = `prisma generate && npm run web:sync && tsc && rm -rf dist/public && cp -r src/public dist/public`.
+- `deploy-back.yml`: шаг «Verify totp web bundle is built» (index.html + remoteEntry.js + main-*.js).
+- Проверено: `web` build чистый; back typecheck+build чистые; смоук `node dist/index.js`
+  (PORT=3455): `/totp/ui` 200 (base href `/totp/`, assets `/totp/web/*`), remoteEntry/main/183
+  чанки 200 application/javascript, favicon.ico 200, traversal 404. Деплой не запускал.
+- TODO (следующие шаги):
+  1. safe/web: TOTP_URL → `/totp/web`; `registerTotpGate()` → возвращает Promise (update интерфейса).
+  2. Проверить consumo webpack-MF-remote через `@module-federation/runtime` (safe/web) E2E.
+  3. Починить optimization (remoteEntry minify).
+  4. Phase 7: удалить `back/client/` (legacy esbuild remote) и `/client/:file` route.
+
+## 2026-09-10 Fix: TOTP_GATE_VERSION undefined (found via probe)
+
+- Same-origin probe unmasked the render failure: `ReferenceError: TOTP_GATE_VERSION is not defined` in chunk 183 (old esbuild build.mjs defined it; Angular build did not).
+- Fix: added `webpack.DefinePlugin({ TOTP_GATE_VERSION: JSON.stringify(process.env.TAG_VERSION ?? ...) })` to webpack.config.js; removed the temporary debug console.error.
+
+Progress:
+- webpack.config.js now has DefinePlugin for TOTP_GATE_VERSION; var container recipe unchanged (library var, runtimeChunk false, scriptType text/javascript).
+- Remaining after rebuild: rerun probe to confirm gate UI renders (subtitle/boxes/version), then update safe/web (type var + await registerTotpGate) and clean up.
+
+## 2026-09-10 Progress: safe/web wired to new remote
+
+- safe/web/src/app/totp-auth.service.ts: remote type changed to `var` (matches new classic webpack container), `gate.registerTotpGate()` is now awaited (async). safe/web builds cleanly.
+- safe/web/.env: TOTP_URL updated from `/totp/client` to `/totp/web`. SAFE_BACK_URL unchanged.
+- gate.component.ts: template was reading raw `@Input texts.*` instead of default-merged `mergedTexts.*` -> subtitle/refresh text never showed defaults. Bound template to mergedTexts (made it public). Default subtitle now renders.
+- webpack.config.js: DefinePlugin sets TOTP_GATE_VERSION (from TAG_VERSION, fallback 0.0.0.0.0.0); removed debug console.error.
+- Rebuilt totp web (hash 3f23bb5b, chunk 183.4dbf84d971a3e604.js) and synced to dist/public/web; remoteEntry.js served at /totp/web/remoteEntry.js with no-cache.
+- Cleaned up all temp probe artifacts from safe/web (probe html/mjs/bundles, diag pages, stub server + its PID, webprobe/, copied chunks).
+- Verified/fixed earlier (this session): TOTP_GATE_VERSION is not defined ReferenceError -> fixed via DefinePlugin; same-origin probe then showed boxes rendered + version populated.
+
+Open:
+- Optimization:true still untested in new var format (could lift angular.json workaround); CI TAG_VERSION never set (matches old behavior).
+- Full safe/web E2E still requires running both servers (totp back on 3455, safe dev on 3231) with real /n/state,/n/verify backend.
+
+## 2026-09-10 Plan: remove legacy back/client (Phase 7)
+
+Rationale: all functionality now lives in web/ (gate.module, totp-session.service, gate.component, logo.service).
+Steps:
+1. Delete back/client/ (src/build.mjs/federation.config.mjs/package*/.gitignore + dist + node_modules)
+2. Delete back/src/public/client/ (stale esbuild artifacts)
+3. Delete back/scripts/sync-client.mjs
+4. ui.ts: remove GET <prefix>/client/:file route
+5. app.ts: drop ${apiPrefix}/client from request-log skip
+6. back/package.json: drop @module-federation/esbuild + esbuild devDeps (only used by client build); run npm install to refresh lockfile
+
+Risk note: prod safe/web must be migrated to /totp/web BEFORE /client route is removed on the server (deploy ordering), else live login breaks.
+
+## 2026-09-10 Progress: legacy client removed
+
+- Fixed `ng serve` schema error: serve target in angular.json had invalid `customWebpackConfig` (dev-server v19 builder reads it from buildTarget, does not accept it in its own options). Removed -> `npm run start` works on :4200.
+- Deleted: back/client/ (src, build.mjs, federation.config.mjs, package*, dist, node_modules), back/src/public/client/, back/scripts/sync-client.mjs, /client route from ui.ts, ${apiPrefix}/client from request-log skip in app.ts, @module-federation/esbuild + esbuild devDeps from back/package.json (lockfile refreshed via npm install).
+- Verified: back typecheck ok; full `npm run build` ok (dist/public now only favicon + web); fresh server: /totp/client/* 404, /totp/web/remoteEntry.js 200, /totp/ui 200.
+
+Deploy note: prod safe/web must be on /totp/web BEFORE shipping this (route removal); TAG_VERSION/optimization retest still open.
+
+## 2026-09-10 Plan: move favicon generator into web
+
+- Move back/scripts/generate-favicons.mjs -> web/scripts/generate-favicons.mjs
+- Logo source: web/src/assets/logo.ts (default when argv not given)
+- Outputs: full set -> ../back/src/public/favicon (prod /totp/favicon serving unchanged); favicon.ico -> web/public (dev tab on :4207)
+- web/package.json: add "generate-favicons": "node scripts/generate-favicons.mjs src/assets/logo.ts" + sharp, to-ico devDeps
+- back/package.json: drop "generate-favicons" script (script moved); back keeps sharp/to-ico (unused) - no dep churn
+- Run it, verify files regenerated in both places
+
+## 2026-09-10 Progress: favicon generator moved to web
+
+- Moved back/scripts/generate-favicons.mjs -> web/scripts/generate-favicons.mjs; input defaults to web/src/assets/logo.ts (overridable via argv).
+- Outputs now: full icon set -> back/src/public/favicon (prod /totp/favicon unchanged), plus favicon.ico -> web/public (dev tab).
+- web/package.json: added "generate-favicons": "node scripts/generate-favicons.mjs src/assets/logo.ts" + sharp/to-ico devDeps (installed).
+- Removed "generate-favicons" script from back/package.json; no remaining refs; back typecheck ok.
+- Ran it: favicon.ico etc. regenerated into back/src/public/favicon and web/public/favicon.ico.
+
+## 2026-09-10 Plan: separate back/web deploys - strip web from back
+
+Decisions (user): remove web build/copy from back; remove /totp/ui,/totp/web,/totp/favicon routes + back/src/public; rewrite deploy-back.yml to back-only.
+Back:
+- del back/scripts/sync-web.mjs, back/src/routes/ui.ts, back/src/public/
+- app.ts: drop uiRoutes import/register; trim requestLogSkipPrefixes to get-updates; drop ui/web/remoteEntry from /get-updates urls
+- package.json: build = "prisma generate && tsc"; drop web:build, web:sync
+- deploy-back.yml: remove web-bundle verification step
+Web:
+- scripts/generate-favicons.mjs: emit full icon set into web/public (self-contained), drop back output
+- src/index.html: reference full favicon set relative (favicon/favicon.*), keep favicon.ico
+- regen favicons
+
+## 2026-09-10 Progress: back/web deploys separated
+
+- back: removed sync-web.mjs, web:sync/web:build scripts, build now = "prisma generate && tsc", deleted src/public (web+favicon), src/routes/ui.ts, unused src/assets/logo.ts; app.ts no longer registers uiRoutes / serves /ui,/web,/favicon; /get-updates urls trimmed.
+- back: deploy-back.yml rewritten to back-only (web-bundle verify step removed). Back clean-build verified; dist has no public.
+- web: favicon generator now writes full set to web/public/favicon (self-contained, manifest icons relative); src/index.html references favicon/favicon.* + manifest + theme-color; npm run build packages favicon into dist/web; dev :4207 serves favicon/favicon.ico 200.
+
+Open: safe/web TOTP_URL must point to the web deployment (not back /totp/web) once live; separate web deploy pipeline to be added.
+
+## 2026-09-10 Progress: safe/web TOTP_URL -> web dev server
+
+- safe/web was reporting "Нет соединения с сервером" + net::ERR_BLOCKED_BY_ORB on TOTP_URL http://localhost:3278/totp/web/remoteEntry.js. Cause: back no longer serves /totp/web (deploy separation), that URL now returns 404 JSON, which Chrome ORB-blocks when loaded as a classic script.
+- Verified empirically (bundled probe w/ safe/web runtime): with TOTP_URL=http://localhost:4207 (web dev server) the runtime loads remoteEntry + totp-core + totp-gate successfully (type var). No /web path append in this path.
+- Updated safe/web/.env: TOTP_URL=http://localhost:4207. In production TOTP_URL must be the deployed web app URL (serving remoteEntry.js at its root).
+
+## 2026-09-10 Progress: fixed TOTP gate input doubling (root cause + E2E verify)
+
+- SYMPTOM: typing into the migrated Angular totp-gate "doubled every input" — two digits per keystroke, focus jumped two boxes, values spilled ["1","1",...].
+- REPRO: built a CDP harness (headless Chrome + Input.dispatchKeyEvent char events) driving the real built gate from web/dist/web via harness.html (real SPA + harness-boot.bundle.js bootstrap that loads safe/web remoteEntry via @module-federation/runtime, baseUrl http://localhost:4600 stub). Stub: GET /auth/totp/state -> {nonce}, POST /auth/totp/verify -> {valid:true} (CORS+OPTIONS, appends body to /tmp/stub-body.log).
+- CONTROLS: bare input = clean; input inside Angular page = clean; vanilla replica of gate logic (no Angular) = clean. => bug is Angular-specific, not event duplication per se.
+- ROOT CAUSE: *ngFor over the primitive `digits` array WITHOUT trackBy. When digits[i] changed identity (""->"1"), Angular's iterable diff treated it as a move/rebuild and repositioned input DOM nodes; combined with [value] one-way binding the just-typed native digit smeared into the next box AND Chrome double-inserted text into the moved node (2x beforeinput/input/change per keystroke).
+- FIX (verified E2E): add `trackBy: trackByIndex` (trackByIndex = (index)=>index) to the digit *ngFor + keep [value]="d". Result: values progressive ["1"]..["123456"], focus advances exactly one box, single events per keystroke, submitted body = {"code":"123456"} verified by stub, gate unlocks (stateEvents ready:true,unlocked:false -> unlocked:true, gateError null).
+- Also left in place: onInput sanitizes input.value (strip non-digits, slice 1) + toggles .filled + auto-advance + submit at 6; onPaste writes all boxes imperatively. No debug instrumentation remains in gate.component.ts.
+- CLEANUP: removed harness/cdp/stub files (harness*.html/mjs, harness-boot.bundle.js, cdp-typer.mjs, os-typer.mjs, control*, replica*), stopped python :4300 and stub :4600, removed /tmp logs. Final clean `npm run build` in web -> dist/web clean (hash 0808ca6e9fca6ed8, remoteEntry.js + gate/core chunks only).
+- NOTE: first CDP run was flaky (pre-unlocked state from leftover profile/localStorage); clean rerun confirmed the fix.
+- os-typer.mjs (real OS keystrokes) blocked by macOS System Events automation permission - abandoned; CDP is the reliable path.
+- Next (user): restart safe/web dev server to pick up the rebuilt remote from :4207 and confirm no doubling in the real app; prod TOTP_URL must point at the deployed web app root.
+
+## 2026-09-10 Plan: TAG_VERSION for web build via dotenv (.env)
+
+- webpack.config.js already reads process.env.TAG_VERSION for the DefinePlugin TOTP_GATE_VERSION (fallback '0.0.0.0.0.0'). Angular CLI does NOT load .env natively, so local/CI builds never see it.
+- Approach (user chose): load .env via dotenv in webpack.config.js + create web/.env (serf fills TAG_VERSION on deploy, like back) + web/.env.example template.
+- Steps:
+  1. Add dotenv devDep in web/package.json (npm i -D dotenv).
+  2. webpack.config.js: `require('dotenv').config()` at top; switch fallback to `||` so an empty `TAG_VERSION=` in .env still maps to '0.0.0.0.0.0' (not empty string).
+  3. web/.env (+ .env.example) with TAG_VERSION= (empty -> fallback locally; serf overwrites on deploy).
+  4. web/.gitignore: dotenv block (.env, .env.*, !.env.example) like back.
+  5. Verify: build with temporary TAG_VERSION -> grep in dist bundle; then reset empty + rebuild clean.
+- No commit/push.
+
+## 2026-09-10 Progress: TAG_VERSION via dotenv in web build
+
+- Web .env now feeds the build: webpack.config.js loads `.env` via dotenv; empty `TAG_VERSION=` -> fallback '0.0.0.0.0.0' (webpack uses `||`), serf-provided value -> real version in DefinePlugin TOTP_GATE_VERSION.
+- Added dotenv devDep, web/.gitignore dotenv section (.env/.env.*/!.env.example), web/.env + .env.example.
+- Verified: built with TAG_VERSION set -> version string present in dist bundle; reset to empty -> clean build uses fallback.
+
+## 2026-09-10 Plan: deploy web -> totp-web slot (nginx static, workflow-managed)
+
+- Goal: static Angular MF bundle (web/) to the same server as back, slot /root/totp-web, prod web root https://pomi-doro.ru/totp-web (this becomes TOTP_URL for safe/web prod).
+- Setup (confirmed with user): nginx static alias via root /root + location /totp-web/; nginx config managed by the workflow (idempotent, .bak backup, nginx -t, reload); no systemd; no new Node process (RAM 957Mi).
+- New file web/.github/workflows/deploy-web.yml mirroring deploy-back.yml: checkout -> node20 -> npm ci -> export .env (dotenv.parse + add-mask) -> validate SSH_HOST/SSH_USER/USER_PASS + hard guard REVERSED_PROXY_SLOT==totp-web (refuse totp) -> npm run build -> verify dist/web artifacts (remoteEntry.js, index.html, main.*.js, styles.*.css) -> stage dist/web/* -> ssh mkdir /root/totp-web.new -> SCP ./deploy -> totp-web.new -> ssh: atomic swap (new->totp-web, keep .swap), append nginx location block (skip if present), nginx -t + reload, curl smoke remoteEntry.js via Host pomi-doro.ru.
+- Cache headers mirror back's /totp/client logic: location ~ /totp-web/(remoteEntry.js|index.html)$ -> no-cache; hashed js/css/ico/png/svg/webmanifest/txt -> immutable max-age=31536000; try_files -> /totp-web/index.html.
+- Envs to add in safe for the web component (user side): SSH_HOST, SSH_USER, USER_PASS, REVERSED_PROXY_SLOT=totp-web (separate group from back's totp). serf basics TAG_VERSION/COMMIT/PROJECT_ID/NAMESPACE/SLAVE_REPO auto.
+- No back changes. safe/web prod TOTP_URL = https://pomi-doro.ru/totp-web (dev :4207).
+
+## 2026-09-10 Progress: deploy-web.yml created + validated
+
+- Created web/.github/workflows/deploy-web.yml (mirrors deploy-back.yml): checkout -> node20 -> npm ci -> export .env (dotenv.parse + add-mask) -> validate SSH_HOST/SSH_USER/USER_PASS + guard REVERSED_PROXY_SLOT==totp-web (refuse totp) -> npm run build -> verify dist/web (remoteEntry.js, index.html, main.*.js, styles.*.css) -> stage dist/web/* -> ssh mkdir /root/totp-web.new -> SCP -> ssh atomic swap (new -> totp-web, keep .swap, delete old), idempotent nginx location /totp-web/ append (default.bak.<ts>, nginx -t, reload), curl smoke https://127.0.0.1/totp-web/remoteEntry.js with Host pomi-doro.ru.
+- nginx block (root /root, no alias bug): try_files -> /totp-web/index.html; remoteEntry.js + index.html -> no-cache; hashed js/css/ico/png/svg/webmanifest/txt -> immutable 31536000. Matches back /totp/client cache logic.
+- Verified: YAML parse OK (11 steps), local dry-run of verify + stage steps against real dist/web PASSES; all produced files covered by cache-header rules.
+- Caveats: SCP target pre-created via ssh mkdir (scp will not create nested dirs); first run nginx gets the block, later runs no-op + reload. Second run of smoke depends on nginx proxy for pomi-doro.ru being live for /totp-web (may 404/502 if cert/SNI hiccup - informational only, run with set -e so it must pass).
+- Next (user side): add envs to safe for the web component (SSH_*, REVERSED_PROXY_SLOT=totp-web), run serf to push ./web into the web slave repo, then trigger commit -d / workflow_dispatch. After deploy: set safe/web prod TOTP_URL=https://pomi-doro.ru/totp-web and smoke the gate.
+
+## 2026-09-10 Plan: BACK_URL env for standalone web admin (host-agnostic deploy)
+
+- User: next time web may be deployed to ANOTHER host. The standalone admin page (web AppComponent, ex-/totp/ui) derives its back API base from document <base href> or defaults to '/totp' (same-host assumption) -> breaks on a different host.
+- Fix: build-time BACK_URL env injected via DefinePlugin as WEB_BACK_URL. When set (absolute, e.g. https://other-host/totp) the admin login/apps calls go there; when empty -> existing behavior (base href else /totp). Remote MF gate unaffected (its baseUrl comes from consumer @Input).
+- Files: web/.env + web/.env.example (BACK_URL=), webpack.config.js (DefinePlugin WEB_BACK_URL), src/types.d.ts (declare), src/app/app.component.ts (WEB_BACK_URL || base || '/totp').
+
+## 2026-09-10 Progress: BACK_URL env implemented (web admin usable on another host)
+
+- webpack DefinePlugin now injects WEB_BACK_URL from .env BACK_URL (empty -> ''). src/types.d.ts declares it. app.component.ts: base = (WEB_BACK_URL || <base href>).replace(/\/+$/,''), fallback '/totp'.
+- web/.env + web/.env.example document BACK_URL (empty default; comment explains cross-host usage).
+- Verified: build with empty -> <base href>/totp logic preserved (no WEB_BACK_URL literal in bundle; hash caa253e03e91489c); build with BACK_URL=https://api.example.com/totp -> value compiled into main.*.js; restored empty -> same clean hash, no stale value. AOT typecheck passes.
+- MF gate unaffected (its baseUrl is consumer-provided @Input).
