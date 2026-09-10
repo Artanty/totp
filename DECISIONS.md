@@ -638,7 +638,7 @@ src/lib/otpauth.ts      — парсер otpauth:// URI
   осталось; `dotenv` (^17.4.2) в dependencies → require('dotenv') на ранере после npm ci
   работает.
 
-## 2026-09-09 — Fix: OOM на сервере — npm ci убит (status 137) (план)
+## 2026-09-09 — get-updates: проп urls со всеми URL приложения (план+done) — npm ci убит (status 137) (план)
 
 - Симптом (деплой 1 из squeze): на сервере `bash: line 3: ... Killed npm ci --omit=dev`,
   `Process exited with status 137` = SIGKILL от OOM-killer. Полный ssh-тракт уже чистый
@@ -659,3 +659,79 @@ src/lib/otpauth.ts      — парсер otpauth:// URI
   ниже пик памяти; audit/fund отключены). Приложение не останавливается.
 - Проверено: YAML парсится, скрипт из шага корректен. Деплой не запущен —
   прогон на сервере следующий за push до main.
+
+## 2026-09-10 — get-updates: проп urls со всеми URL приложения (план+done)
+
+- Требование: в `GET /totp/get-updates` добавить `urls` со всеми полными URL приложения.
+- `back/src/app.ts` get-updates-handler: добавлен объект `urls` (пути от `API_PREFIX`):
+  register, login, tokens, tokenCode (`/tokens/:id/code`), tokenVerify (`/tokens/:id/verify`),
+  apps, ui, client, remoteEntry (`/client/remoteEntry.js`), getUpdates. Отдаётся в ответе как `urls`.
+- Проверено: `npm run typecheck` чистый. На сервер не деплою (push только по явному запросу).
+
+## 2026-09-10 — TOTP component: иконка замок → Ant Design lock outlined (план+done)
+
+- Требование: заменить иконку-замок в TOTP gate на Ant Design icon `lock` (outlined)
+  (https://ant.design/components/icon).
+- Источник: raw SVG https://raw.githubusercontent.com/ant-design/ant-design-icons/master/
+  packages/icons-svg/svg/outlined/lock.svg (viewBox 0 0 1024 1024).
+- Bbox содержимого: x:160..864, y:112..912 (дверца дуги на y=112, корпус 160..864,
+  низ 912) — центр (512,512), размеры 704x800. Посчитан геометрически по path.
+- Место правки: `back/client/src/gate.ts` → `DEFAULT_LOGO`. Трансформ:
+  `translate(3.84 3.84) scale(0.055)` → иконка 38.7x44 по центру бейджа 64x64 rx=14
+  (#2c6df6), белый символ. Кодирование прежнее (data:image/svg+xml;utf8,+encodeURIComponent).
+- Пересобрано: `npm run client:sync` → новый хеш `gate-QSP6WYI2.js` (вместо TMGMEBL2),
+  синк в src/public/client; `npm run typecheck` чистый; путь `M832 464h-68V240`
+  присутствует в собранном бандле и в src/public/client.
+- Деплой не запускал.
+
+## 2026-09-10 — Favicon → SVG-лого «T» (план+done)
+
+- Требование: заменить favicon (в т.ч. обновлённые юзером в input/favicon) на новую
+  SVG-логотип «T» (палитра #4DD0FF→#3B5BFF — фикс, т.к. favicon статичен; градиент,
+  прозрачный фон, border #111827 rx=24).
+- Генерация (sips SVG→PNG): 16/32/48/180/192/512 → `favicon-16|32.png`,
+  `favicon.ico` (PNG-embedded ICO, node-скрипт: 16/32/48), `apple-touch-icon.png` (180),
+  `android-chrome-192|512`. Скопированы в `back/src/public/favicon/` и `input/favicon/`.
+- Fix бага сборки: `cp -r src/public dist/public` при существующем dist создавал вложенность
+  `dist/public/public` → dist/favicon оставался старым. package.json `build` →
+  `rm -rf dist/public && cp -r src/public dist/public` (на CI это и так чистый checkout).
+- Проверено: полный build → dist/public/favicon содержит новые файлы; смоук :3402
+  (curl /totp/favicon/*) → 200, favicon.ico=3501B, android-192=11467B. Деплой не деплою.
+- Замечание: имена файлов прежние + Cache-Control max-age=86400 → браузеры потребителей
+  могут держать старый favicon до дня.
+
+## 2026-09-10 — TOTP component: logo = SVG «T» с градиентом, цвет меняется каждую сессию (план+done)
+
+- Требование: вместо PNG-лого использовать SVG «T» (viewBox 0 0 100 100, rounded square
+  border rx=24, path T) с градиентом --t-start/--t-end, причём PALITY меняется каждую сессию
+  (случайный выбор из 4 схем на страницу).
+- `back/client/src/logo.ts` (полностью переписан, base64-PNG удалён):
+  - `LOGO_PALETTES` — 4 схемы: #4DD0FF→#3B5BFF, #A855F7→#EC4899, #22C55E→#06B6D4,
+    #3B82F6→#3B82F6.
+  - `buildDefaultLogo(palette?)` — собирает data:image/svg+xml;utf8 (стопы градиента
+    подставляются в defs, border #111827 stroke-width 5, path T заполнен url(#t-gradient)).
+  - `DEFAULT_LOGO = buildDefaultLogo()` — случайная палитра на загрузку модуля (session).
+- gate.ts не менялся (import DEFAULT_LOGO из './logo'; `logo`-атрибут потребителя
+  по-прежнему перекрывает дефолт).
+- Пересобрано: client:sync (new gate-7LQ5LBUW.js, 12KB — было 81KB с base64-PNG),
+  typecheck чистый; в бандле присутствуют все 4 палитры. На сервер не деплою.
+
+## 2026-09-10 — TOTP component: лого из input/logo.png + обновлены favicon (план+done)
+
+- Требование: заменить SVG-иконку замка (Ant Design оказалась «уродливой») на логотип
+  юзера `input/logo.png` (1254x1254 RGB, белый фон, контент bbox x:72..1179 y:66..1185);
+  также обновить favicon из `input/favicon/`.
+- Лого: скрипт (pngjs, билинейный ресайз) обрезал белый край по bbox и уменьшил до
+  256x256 (51.4KB, при 128 — 13.5KB, 512 — 180.9KB). base64 → `back/client/src/logo.ts`
+  (export DEFAULT_LOGO data:image/png;base64,...). gate.ts: import из './logo',
+  старый SVG-констант удалён. Было 8KB chunk → gate-465QK3VQ.js 81KB (remoteEntry 88KB).
+- Favicon: `input/favicon/*` скопированы в `back/src/public/favicon/` (7 файлов; имена
+  прежние → ui.ts serves их без изменений кода).
+- Пересобрано: client:sync (new gate-465QK3VQ.js), typecheck чистый. На сервер не деплою.
+
+## 2026-09-10 — TOTP component: version block позиция (план+done)
+
+- Требование: `.version` в `safe-totp-gate` → `bottom: 4px; right: 4px`.
+- `back/client/src/gate.ts`: `.version { bottom: 8px; right: 14px }` → `bottom: 4px; right: 4px`.
+- Пересобрано: `npm run client:sync` (новый хеш gate-TMGMEBL2.js, синк в src/public/client),
+  `npm run typecheck` чистый. На сервер не деплою.

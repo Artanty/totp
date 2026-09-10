@@ -1,13 +1,13 @@
 {
   "name": "totp",
-  "version": "0.1.23",
+  "version": "0.1.24",
   "description": "Authy-like TOTP token manager service",
   "private": true,
   "type": "module",
   "main": "dist/index.js",
   "scripts": {
     "dev": "tsx watch src/index.ts",
-    "build": "prisma generate && npm run client:sync && tsc && cp -r src/public dist/public",
+    "build": "prisma generate && npm run client:sync && tsc && rm -rf dist/public && cp -r src/public dist/public",
     "client:build": "npm --prefix client run build",
     "client:sync": "npm run client:build && node scripts/sync-client.mjs",
     "start": "node dist/index.js",

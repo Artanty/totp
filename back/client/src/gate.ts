@@ -1,4 +1,5 @@
 import { createTotpSession, type TotpSession, type TotpSessionState } from './core';
+import { DEFAULT_LOGO } from './logo';
 
 export type TotpGateTexts = {
   subtitle: string;
@@ -31,14 +32,6 @@ const ELEMENT_NAME = 'safe-totp-gate';
 
 declare const TOTP_GATE_VERSION: string | undefined;
 const GATE_VERSION = TOTP_GATE_VERSION ?? '0.0.0.0.0.0';
-
-const DEFAULT_LOGO = `data:image/svg+xml;utf8,${encodeURIComponent(`
-<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" fill="none">
-  <rect width="64" height="64" rx="14" fill="#2c6df6"/>
-  <g transform="translate(10 1.75) scale(0.1833) translate(-60 -70)" fill="#fff">
-    <path d="M90 400l180 0q13 0 21-9 9-8 9-21l0-150q0-13-9-21-8-9-21-9l0-30q-1-38-26-64-24-25-62-26-40 1-65 26-26 26-27 64l0 30q-13 0-21 9-9 8-9 21l0 150q0 13 9 21 8 9 21 9l0 0z m40-180l0-60q1-22 15-36 14-14 35-14 22 0 36 14 14 14 14 36l0 60-100 0z"/>
-  </g>
-</svg>`)}`;
 
 export class TotpGateElement extends HTMLElement {
   static get observedAttributes(): string[] {
@@ -303,8 +296,8 @@ export class TotpGateElement extends HTMLElement {
         @keyframes totp-spin { to { transform: rotate(360deg); } }
         .version {
           position: absolute;
-          bottom: 8px;
-          right: 14px;
+          bottom: 4px;
+          right: 4px;
           color: var(--text-muted, #8b93a7);
           font-size: 10px;
           line-height: 1.4;

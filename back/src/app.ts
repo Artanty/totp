@@ -66,6 +66,18 @@ export function buildApp(): FastifyInstance {
       logger.readLogFile('app.strat.log'),
     ]);
     const envs = Object.fromEntries(Object.keys(process.env).map((k) => [k, true]));
+    const urls = {
+      register: `${apiPrefix}/auth/register`,
+      login: `${apiPrefix}/auth/login`,
+      tokens: `${apiPrefix}/tokens`,
+      tokenCode: `${apiPrefix}/tokens/:id/code`,
+      tokenVerify: `${apiPrefix}/tokens/:id/verify`,
+      apps: `${apiPrefix}/apps`,
+      ui: `${apiPrefix}/ui`,
+      client: `${apiPrefix}/client`,
+      remoteEntry: `${apiPrefix}/client/remoteEntry.js`,
+      getUpdates: `${apiPrefix}/get-updates`,
+    };
     return reply.send({
       version: process.env.TAG_VERSION,
       commit_message: process.env.COMMIT,
@@ -74,6 +86,7 @@ export function buildApp(): FastifyInstance {
       slave_repo: process.env.SLAVE_REPO,
       logs: { log, error, start },
       envs,
+      urls,
     });
   });
 
