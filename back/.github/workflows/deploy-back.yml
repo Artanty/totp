@@ -56,17 +56,6 @@ jobs:
     - name: Build
       run: npm run build
 
-    - name: Verify totp client component is built
-      run: |
-        set -e
-        cd dist/public/client
-        test -f remoteEntry.js || { echo 'remoteEntry.js missing after build' >&2; exit 1; }
-        for chunk in remoteEntry.js core-*.js gate-*.js chunk-*.js; do
-          [ -f "$chunk" ] || { echo "missing $chunk" >&2; exit 1; }
-        done
-        echo 'Totp client component files:'
-        ls -1
-
     - name: Stage deploy artifacts
       run: |
         mkdir -p deploy

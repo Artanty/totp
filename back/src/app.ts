@@ -7,7 +7,6 @@ import authPlugin from './plugins/auth.js';
 import authRoutes from './routes/auth.js';
 import tokenRoutes from './routes/tokens.js';
 import appRoutes from './routes/apps.js';
-import uiRoutes from './routes/ui.js';
 
 declare module 'fastify' {
   interface FastifyInstance {
@@ -26,9 +25,8 @@ export function buildApp(): FastifyInstance {
   app.register(authRoutes, { prefix: `${apiPrefix}/auth` });
   app.register(tokenRoutes, { prefix: `${apiPrefix}/tokens` });
   app.register(appRoutes, { prefix: `${apiPrefix}/apps` });
-  app.register(uiRoutes, { prefix: apiPrefix });
 
-  const requestLogSkipPrefixes = [`${apiPrefix}/get-updates`, `${apiPrefix}/ui`, `${apiPrefix}/favicon`, `${apiPrefix}/client`];
+  const requestLogSkipPrefixes = [`${apiPrefix}/get-updates`];
 
   app.addHook('preHandler', async (request) => {
     try {
@@ -73,9 +71,6 @@ export function buildApp(): FastifyInstance {
       tokenCode: `${apiPrefix}/tokens/:id/code`,
       tokenVerify: `${apiPrefix}/tokens/:id/verify`,
       apps: `${apiPrefix}/apps`,
-      ui: `${apiPrefix}/ui`,
-      client: `${apiPrefix}/client`,
-      remoteEntry: `${apiPrefix}/client/remoteEntry.js`,
       getUpdates: `${apiPrefix}/get-updates`,
     };
     return reply.send({
