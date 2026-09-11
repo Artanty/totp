@@ -14,12 +14,21 @@ export function setTotpGateInjector(injector: EnvironmentInjector): void {
   stashedInjector = injector;
 }
 
+async function createFallbackInjector(): Promise<EnvironmentInjector> {
+  // createApplication() calls createNgModuleRef(), which NG0909 forbids from
+  // inside the Angular zone. Run it in the parent (non-Angular) zone instead.
+  const nonAngularZone = Zone.current.parent ?? Zone.current;
+  return nonAngularZone.run(() =>
+    createApplication().then((appRef) => appRef.injector)
+  );
+}
+
 export async function registerTotpGate(): Promise<void> {
   if (elementDefined) return;
   let injector = stashedInjector;
   if (!injector) {
     if (!pendingInjector) {
-      pendingInjector = createApplication().then((appRef) => appRef.injector);
+      pendingInjector = createFallbackInjector();
     }
     injector = await pendingInjector;
   }

@@ -1063,3 +1063,69 @@ Open: safe/web TOTP_URL must point to the web deployment (not back /totp/web) on
 - web/.env + web/.env.example document BACK_URL (empty default; comment explains cross-host usage).
 - Verified: build with empty -> <base href>/totp logic preserved (no WEB_BACK_URL literal in bundle; hash caa253e03e91489c); build with BACK_URL=https://api.example.com/totp -> value compiled into main.*.js; restored empty -> same clean hash, no stale value. AOT typecheck passes.
 - MF gate unaffected (its baseUrl is consumer-provided @Input).
+
+## 2026-09-11 — Totp-guard в самом totp + декуплинг для других проектов (план)
+
+### Проблема
+- В safe/web интеграция TOTP-guard выполнена, но сильно связана с проектом:
+  - `totp-auth.service.ts` (Angular) хардкодит RUNTIME_NAME='safe', REMOTE_NAME='totp',
+    имена модулей totp-core/totp-gate, требует зависимость `@module-federation/runtime`.
+  - safe/back сам реализует relay-клиент (axios login + JWT-кэш + verify) + nonce + routes.
+- Хочется: (1) добавить тот же guard в сам totp (перед админской панелью), без кастомной логики;
+  (2) сделать интеграцию лёгкой для будущих проектов.
+
+### Декуплинг: 3 артефакта для любого потребителя
+1. **`totp-guard.ts` (framework-agnostic лоадер, ~35 строк, БЕЗ зависимостей)**:
+   - грузит `<script src="{remoteUrl}/remoteEntry.js">` и дергает `window['totp'].get()`
+     (контейнер `var totp`, `shared: {}` → init/shareScope не нужен → @module-federation/runtime НЕ требуется).
+   - `loadTotpGuard({ remoteUrl, baseUrl, storagePrefix? })` → `{ session }`
+     (загружает totp-core + totp-gate, регистрирует `<safe-totp-gate>`, создаёт сессию).
+   - копируется в потребляющий проект как есть — единственная «магия»: env `TOTP_URL` + relay-контракт.
+2. **Тонкий Angular-сервис** (~60 строк, signals: ready/unlocked/stateFailed) — одинаковый во всех проектах.
+3. **Relay-контракт** в бэкенде потребителя: `GET {base}/auth/totp/state` → `{nonce}`,
+   `POST {base}/auth/totp/verify {code}` → `{valid, expiresAt, nonce}`.
+   Названия env: `TOTP_SERVICE_URL/USER/PASSWORD`, `TOTP_TOKEN_ID` (как в safe).
+
+### Что делаем в totp
+- `back/src/lib/totpGuard.ts` — `TOTP_BOOT_NONCE = randomUUID()`.
+- `back/src/routes/totpGuard.ts` — `GET {prefix}/auth/totp/state`; `POST .../verify`:
+  verify кода ПРЯМО по токену `TOTP_TOKEN_ID` (findUnique → decryptSecret → verifyTotp window=1),
+  rate-limit 10/min/IP (inline, без новых зависимостей), ответы 400/401/502-подобные.
+  Регистрируется только если `TOTP_TOKEN_ID` валиден (иначе guard выключен).
+- `web/src/app/guard/totp-guard.ts` — reusable лоадер (как п.1).
+- `web/src/app/guard/totp-guard.service.ts` — тонкий Angular-сервис.
+- `web/src/app/app.component.ts` — guard перед login/admin: loading → error(retry) → gate → unlocked.
+- `web/webpack.config.js` — DefinePlugin `TOTP_URL`; `web/src/types.d.ts` — declare TOTP_URL.
+- `web/.env`/`.env.example` — `TOTP_URL` (dev: http://localhost:4207).
+- `web/package.json` — БЕЗ новых deps (var-container вместо @module-federation/runtime).
+- `back/.env`/`.env.example` — `TOTP_TOKEN_ID` (пусто => guard off).
+- Для dev: отдельный gate-юзер+токен «Totp Admin» (или существующий токен юзера), otpauth-URI юзеру.
+
+### Прогресс (реализовано и проверено e2e)
+- **back**: `src/lib/totpGuard.ts` (TOTP_BOOT_NONCE, TOTP_GUARD_SESSION_MS, getGuardTokenId),
+  `src/routes/totpGuard.ts` (GET /state, POST /verify: прямая проверка по токену TOTP_TOKEN_ID,
+  decryptSecret+verifyTotp window=1; inline rate-limit 10/мин/IP через TOTP_GUARD_RATE_LIMIT;
+  400/401/429/500/503), регистрация в `src/app.ts` только при валидном TOTP_TOKEN_ID.
+  `back/.env` TOTP_TOKEN_ID=5; `back/.env.example` документирует TOTP_TOKEN_ID/TOTP_GUARD_RATE_LIMIT.
+  typecheck/build ok; smoke на :3999 ok (state→nonce; wrong→401; bad→400; good→200 {valid:true}).
+- **web**: `src/app/guard/totp-guard.ts` + `totp-guard.service.ts`, `app.component.ts` (loading/error/gate/login-admin),
+  `webpack.config.js` DefinePlugin TOTP_URL, `types.d.ts`, `.env`/`.env.example` (TOTP_URL, BACK_URL пуст для dev).
+- **ВАЖНОЕ решение по лоадеру**: изначально сделали zero-dep `var`+`get()` (script injection + window['totp'].get),
+  но в dev-режиме (webpack-dev-server) контейнер отдаёт ПУСТЫЕ модули (moduleKeys:[]; hasCreate/register: undefined).
+  Перешли на `@module-federation/runtime@2.9.0` (как в safe) — работает и в dev, и в prod.
+  Это единственная зависимость потребителя; сам лоадер/totp-guard.ts по-прежнему framework-agnostic и копируется.
+- **gate.module.ts**: fallback-приложение `createApplication()` давал NG0909 ("Expected to not be in Angular Zone").
+  Починили — создаём fallback-инжектор `Zone.current.parent.run(...)` (вне Angular-зоны хоста).
+- **totp-guard.service.ts**: `session` теперь signal (был plain field) → `[session]="guard.session()"`,
+  иначе binding получал null на первом рендере и gate плодил собственный internal-сессию.
+- **Cross-app change detection**: уведомления сессии приходят в зоне GATE-app (второго Angular-приложения),
+  из-за чего `unlocked`-signal хоста не триггерил перерисовку. Обёртка
+  `session.onStateChange((s) => ngZone.run(() => setFromState(s)))` (NgZone хоста) решает.
+- **e2e (headless Chrome + CDP против dev-сервера 4207, relay через /totp→3278)**:
+  холодный запуск → `<safe-totp-gate>` с 6 input.digit (shadow DOM) → ввод действующего кода (генерация
+  через totp token id=5) → unlock → localStorage safe_totp_unlocked_nonce/at → host показывает `<app-login>`
+  («TOTP · apps Email Password Sign in»). Консоль без ошибок. Reload с сохранённой сессией → сразу логин.
+- **Осталось**: прогнать такую же проверку против PROD-сборки (static serve dist/web с TOTP_URL на статику)
+  и обновить safe/web, если захотим (тоже использует var-container? нет — safe уже на @module-federation/runtime).
+  В dev-сервер возвращается обычный `npm start` (сейчас поднят с --live-reload=false для headless-тестов).
+- Servers: back на :3278 (node dist/index.js, relay активен), web dev на :4207.
