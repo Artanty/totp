@@ -979,6 +979,50 @@ Open: safe/web TOTP_URL must point to the web deployment (not back /totp/web) on
 - TODO на будущее: `git pull`/merge этих двух правок (DECISIONS.md + deploy-web.yml) в
   slave-репо web → push → деплой.
 
+## 2026-09-11 — totp-web не грузит ассеты: <base href="/"> (план)
+
+- Симптом (консоль на https://pomi-doro.ru/totp-web/): styles.css/polyfills/main.js
+  запрашиваются с КОРНЯ `https://pomi-doro.ru/*` (404/text/html, strict MIME), тоже
+  `/favicon/site.webmanifest` → не грузится ничего.
+- Причина: собранный `web/src/index.html` (и dist) содержит `<base href="/">`
+  (angular build по умолчанию), а относительные ссылки (`styles.*.css`, `main.*.js`,
+  `favicon/*`) резолвятся относительно `<base>` → домен-корень вместо `/totp-web/`.
+  nginx отдаёт index (try_files) с `root /root` — файлы есть на `/totp-web/*`, но
+  браузер их не запрашивает.
+- Fix:
+  1. Сборка с `--base-href="${WEB_BASE_HREF:-/totp-web/}"` → `<base href="/totp-web/">`,
+     все ассеты/favicon резолвятся под `/totp-web/`. WEB_BASE_HREF из .env (дефолт
+     /totp-web/) — портируемость на другой хост.
+  2. admin API base (`app.component.ts`: `WEB_BACK_URL || <base href> || '/totp'`):
+     при base href /totp-web/ без BACK_URL API указывал бы на статику → задать
+     `BACK_URL=https://pomi-doro.ru/totp` в web/.env (+ .env.example docs).
+  3. webpack `output.publicPath="auto"` не трогаем (MF-чанки резолвятся от URL
+     remoteEntry при потреблении safe/web).
+- Деploy: пересборка локал + rsync dist/web → /root/totp-web.new → атомарный своп →
+  reload nginx (location уже стоит, guard не трогает). Проверка curl index/главный
+  чанк/favicon.
+
+### 2026-09-11 — ГОТОВО (rebuild + деплой на сервер)
+
+- `web/package.json`: `build` → `ng build --base-href="${WEB_BASE_HREF:-/totp-web/}"`;
+  собранный index.html теперь `<base href="/totp-web/">`.
+- `web/.env`: `WEB_BASE_HREF=/totp-web/` + `BACK_URL=https://pomi-doro.ru/totp`
+  (убран dev-значение localhost:3278); `web/.env.example` задокументирован.
+- `webpack.config.js` не менялся: `output.publicPath='auto'` — MF-чанки резолвятся от
+  URL remoteEntry при потреблении safe/web; DefinePlugin WEB_BACK_URL/TOTP_GATE_VERSION
+  как раньше.
+- Локал: `npm run build` чистый (main.e65eaa8d60927873.js), base href в dist правильный,
+  `https://pomi-doro.ru/totp` запечён в бандл.
+- Деплой вручную (как workflow): rsync dist/web/* → /root/totp-web.new → атомарный своп
+  (swap-папка) → `nginx -t` OK + reload (location уже стоял, guard скипнул вставку).
+- Прод смоук (https://pomi-doro.ru): /totp-web/ 200 text/html c `<base href="/totp-web/">`,
+  styles.css 200 text/css, main.e65eaa8d60927873.js 200 application/javascript,
+  favicon/site.webmanifest 200, remoteEntry.js 200. API-бейз: POST /totp/auth/login → 400 JSON.
+- ВАЖНО для будущих деплоев через workflow (safe envs): build читает `.env` из slave-репо.
+  Для корректного админ-API при следующих деплоях в env'ы проекта totp-web в safe надо
+  добавить `BACK_URL=https://pomi-doro.ru/totp` и опционально `WEB_BASE_HREF=/totp-web/`
+  (без него дефолт и так /totp-web/). Local .env gitignored — на ранер не попадёт сам.
+
 ## 2026-09-10 Progress: BACK_URL env implemented (web admin usable on another host)
 
 - webpack DefinePlugin now injects WEB_BACK_URL from .env BACK_URL (empty -> ''). src/types.d.ts declares it. app.component.ts: base = (WEB_BACK_URL || <base href>).replace(/\/+$/,''), fallback '/totp'.

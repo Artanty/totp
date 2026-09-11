@@ -1,10 +1,10 @@
 {
   "name": "web",
-  "version": "0.0.5",
+  "version": "0.0.6",
   "scripts": {
     "ng": "ng",
     "start": "ng serve",
-    "build": "ng build",
+    "build": "ng build --base-href=\"${WEB_BASE_HREF:-/totp-web/}\"",
     "watch": "ng build --watch --configuration development",
     "generate-favicons": "node scripts/generate-favicons.mjs src/assets/logo.ts",
     "test": "ng test"
