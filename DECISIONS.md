@@ -1214,3 +1214,46 @@ Open: safe/web TOTP_URL must point to the web deployment (not back /totp/web) on
   cs99850_totp@185.114.247.197).
 - Осталось: `TOTP_TOKEN_ID=5` в env-группе прод-бэка (serf → back slave .env → deploy-back.yml копирует
   .env в /root/totp + systemctl restart totp). Проверка после редеплоя: GET /totp/auth/totp/state → 200.
+
+## 2026-09-11 — verify 500 "Unsupported state or unable to authenticate data"
+- Симптом: POST /totp/auth/totp/verify → 500 (AES-GCM auth-tag mismatch в decryptSecret, crypto.ts).
+- Проверено ремоутом без cookies: 500 воспроизводится; /state 200 (роль смонтирована — TOTP_TOKEN_ID=5 на проде есть).
+- DB (cs99850_totp@185.114.247.197) доступна локально: tokens: id2 "Safe Login:admin" (2026-09-05) и
+  id5 "totp" (2026-09-11T12:38Z, app id4). token5 decrypt локальным TOTP_MASTER_KEY = OK;
+  token2 = FAIL. => token5 создан dev-бэком (:3278), прод-ключ другой.
+- Вывод: на проде TOTP_MASTER_KEY ≠ локальному; единый shared-DB требует одного мастер-ключа.
+- Варианты: (1) выровнять прод TOTP_MASTER_KEY на локальный (token5 работает сразу; token2 станет
+  нерасшифровываемым на проде — надо пересоздать, если используется); (2) пересоздать gate-app через
+  прод-админку (новый tokenId, шифрование ключом прода, пере-скан Authy).
+
+## 2026-09-11 — Plan: unify TOTP_MASTER_KEY (prod key = single source)
+- User выбрал: прод-ключ (0c628e…) — единый. План:
+  1) backup (старый локальный ключ + старый secretEnc token5) в файл (не в git);
+  2) re-encrypt token5 in place prod-ключом (тот же id=5, тот же секрет → Authy без изменений);
+  3) back/.env TOTP_MASTER_KEY = 0c628e… (прод env-group не трогаем);
+  4) пользователь перезапустит dev back (npm start) — кэш ключа;
+  5) verify: dev+prod wrong code → 401; user: Authy code на prod → valid, lock работает.
+
+### Unify ключа — выполнено
+- Бэкап (старый локальный ключ + старый secretEnc token5) → /var/folders/.../opencode/totp-key-unify.backup.json.
+- token5 re-encrypted прод-ключом in place (id=5, секрет тот же, roundtrip проверен; backup-файл с old).
+- back/.env TOTP_MASTER_KEY → 0c628e… (=== прод). Прод env-group не трогали.
+- Проверено: token2 и token5 расшифровываются единым ключом; PROD POST /verify "000000" → 401 Invalid code (был 500).
+- НЕ сделано: dev back (:3278) ещё крутится со старым кэшем ключа — нужен restart `npm start`.
+
+## 2026-09-11 — dev 401 /totp/apps (после успешного gate)
+- Симптом: только в dev после unlock gate-admin грузится, но GET /totp/apps → 401.
+- Клиент AuthService.isLoggedIn декодирует payload БЕЗ проверки подписи → просроченный/старый
+  totp_jwt в dev localStorage проходит локально, но не проходит jwtVerify на бэке → 401.
+- Проверено: dev бэк (:3278, 127.0.0.1) жив; токен, подписанный текущим back/.env JWT_SECRET,
+  → /totp/apps 200. Значит дело в просроченном/чужом JWT в dev-браузере.
+- Фикс: в dev sign out (кнопка) или удалить localStorage 'totp_jwt' и залогиниться заново.
+
+## 2026-09-11 — safe prod gate: verify 502 TOTP_UNREACHABLE
+- Симптом: safe prod (mana-7fo0.onrender.com/auth/totp/verify) → 502 {code:"TOTP_UNREACHABLE"}.
+- Диагноз: safe back up (state 200, preflight 204); реле remoteApiRequest не достаёт TOTP_BACK_URL
+  (REMOTE_UNREACHABLE: env отсутствует/недоступен). Локально и IP и https://pomi-doro.ru/totp
+  отвечают 200; login safe.gate@totp.local на проде тоtp 200 (токен есть) → креды валидны.
+- Фикс (user side, Render env для mana-7fo0.onrender.com):
+  TOTP_BACK_URL=https://pomi-doro.ru/totp (+ TOTP_BACK_USER=safe.gate@totp.local,
+  TOTP_BACK_PASSWORD как в safe/back/.env). После env → redeploy/restart.
