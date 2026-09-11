@@ -1257,3 +1257,23 @@ Open: safe/web TOTP_URL must point to the web deployment (not back /totp/web) on
 - Фикс (user side, Render env для mana-7fo0.onrender.com):
   TOTP_BACK_URL=https://pomi-doro.ru/totp (+ TOTP_BACK_USER=safe.gate@totp.local,
   TOTP_BACK_PASSWORD как в safe/back/.env). После env → redeploy/restart.
+
+## 2026-09-12 — totp-web prod: lock btn "does nothing"
+- Root cause: remote session `dispose()` (totp-session.service.ts) calls `listeners.clear()`.
+  Gate ngOnDestroy → dispose() → wipes host TotpGuardService/TotpAuthService onStateChange
+  subscription. После unlock гаte unmounts, потом lock() flip-ает remote state.unlocked=false +
+  emit() в пустой set → host signal остаётся true → auth-feature effect видит unlocked()===true
+  = loggedIn → flow.complete() → admin обратно (looks like nothing).
+- Plan:
+  1) totp-session.service.ts: dispose() НЕ чистит listeners (владелец сессии — host-сервис;
+     gate снимает только свой listener).
+  2) totp-guard.service.ts lock(): defeensive this.unlocked.set(false) всегда.
+  3) safe/web totp-auth.service.ts lock(): аналогичный defensive set (тот же remote).
+  4) BUILD totp-web; prod: rebuild+redeploy totp-web (remote также чинит safe gate).
+
+- Progress: fix applied —
+  1) totp-session.service.ts dispose() = stopWatchdog() only (no listeners.clear()).
+  2) totp-guard.service.ts lock() всегда set unlocked=false (defensive).
+  3) safe/web totp-auth.service.ts lock() аналогично.
+  Build: totp-web prod OK (main.6fed5826ac34aabf.js), safe web prod OK (бюджетный warning старый).
+- TODO user: rebuild+redeploy totp-web на поми-дору (remote также чинит safe gate).

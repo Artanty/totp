@@ -202,9 +202,12 @@ export function createTotpSession(config: TotpSessionConfig): TotpSession {
     emit();
   }
 
+  // The session is owned by whoever created it (the host app service), not by
+  // the gate view. The gate removes only its own listener on destroy, so
+  // dispose() must NOT clear the shared listener set — that would sever the
+  // host's onStateChange subscription and leave a stale `unlocked` signal.
   function dispose(): void {
     stopWatchdog();
-    listeners.clear();
   }
 
   return {

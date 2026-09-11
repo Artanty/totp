@@ -66,12 +66,10 @@ export class TotpGuardService {
 
   lock(): void {
     const session = this.activeSession;
-    if (session) {
-      session.lock();
-    } else {
-      this.session.set(null);
-      this.unlocked.set(false);
-    }
+    if (session) session.lock();
+    // Clear the flag unconditionally so the gate re-renders even if the
+    // session's state-change listeners were previously severed.
+    this.unlocked.set(false);
   }
 
   private setFromState(state: TotpGuardState): void {
