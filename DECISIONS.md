@@ -1199,3 +1199,18 @@ Open: safe/web TOTP_URL must point to the web deployment (not back /totp/web) on
 - `admin.component.ts`: кнопка **lock** в user-bar → `guard.lock()` + `flow.reset()` (сброс TOTP-сессии, назад к gate, без reload).
 - `sign out` теперь тоже без reload: `guard.lock()` + `auth.logout()` + `flow.reset()` — полный unlogin, плавно к gate.
 - `ng build` totp/web чисто.
+
+## 2026-09-11 — prod gate 404: TOTP_TOKEN_ID unset on prod back
+- После фикса TOTP_URL=… totp-web gate грузится, но `GET /totp/auth/totp/state` → 404.
+- Причина: `src/app.ts` регистрирует totpGuardRoutes только при `TOTP_TOKEN_ID` валидном
+  (`getGuardTokenId()`). На прод-бэке env пуст → роуты не смонтированы → 404.
+- Проверка: `GET https://pomi-doro.ru/totp/get-updates` → envs: TOTP_TOKEN_ID=ABSENT/empty,
+  API_PREFIX/TOTP_MASTER_KEY/JWT_SECRET set. TOTP_MASTER_KEY есть → decryptSecret сможет.
+- Фикс (user side, deploy): создать app в админке (id из /totp/apps), его id указать как
+  `TOTP_TOKEN_ID=<id>` в env-группе прод-бэка (slave .env для deploy-back.yml) + redeploy back.
+
+### Прод-gate продолжение
+- Пользователь подтвердил: gate app = **token 5** (виден и в dev, и в prod-списке → DB одна и та же,
+  cs99850_totp@185.114.247.197).
+- Осталось: `TOTP_TOKEN_ID=5` в env-группе прод-бэка (serf → back slave .env → deploy-back.yml копирует
+  .env в /root/totp + systemctl restart totp). Проверка после редеплоя: GET /totp/auth/totp/state → 200.
