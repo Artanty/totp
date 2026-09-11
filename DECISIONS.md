@@ -1180,3 +1180,10 @@ Open: safe/web TOTP_URL must point to the web deployment (not back /totp/web) on
 - **Сборки:** typecheck safe/back + totp/back чисто; `ng build` totp/web и safe/web чисто (только pre-existing бюджет-warning project-detail.component).
 - **Блокер проверки runtime:** MySQL на 185.114.247.197 отклоняет креды и safe (`cs99850_safe`) и totp (`cs99850_totp`) — креды в .env устарели/сервер заменил пароли. Код ок, e2e/remoteApiRequest-sanity не прогнать, пока креды не починят.
 - **Коммиты рефакторинга ещё не сделаны** (жду «go» на раздельные коммиты).
+
+### Баг safe/web: вид не переходит к основному приложению после ввода кода (fix)
+- Симптом: в safe/web ввёл код → gate unlock прошёл (localStorage записан), но `AUTH_DONE` не срабатывал и основное приложение не показывалось. После F5 (persisted unlock) — всё ок.
+- Найдено через CDP-репро (fetch-патч `/auth/totp/verify` → valid): `setFromState` получал `unlocked:true`, но `effect(()=>{ if (auth.unlocked()) complete() })` не перезапускался.
+- Причина: уведомление `onStateChange` приходило ВНЕ Angular-зоны; сигнал `unlocked()` ставился, но `ApplicationRef.tick()` не гонялся → effect не сбрасывался (подтверждено: добавился zone-`setInterval` — стало работать). totp уже чинил это в `TotpGuardService` (обёртка в `ngZone.run`), в safe-web его не было.
+- Fix (safe/web `totp-auth.service.ts`, коммит `62bb102`): `onStateChange((state) => this.ngZone.run(() => this.setFromState(state)))`.
+- Проверено CDP: ввод кода → `AUTH_DONE` → shell (nav:true), без перезагрузки. `ng build` ../safe/web чисто.
