@@ -70,16 +70,20 @@ import { AuthService } from '../auth/auth.service';
   `,
   styles: [`
     .layout {
-      display: flex; flex-wrap: wrap; gap: 20px; align-items: stretch; justify-content: center;
-      width: 100%; max-width: 1120px;
+      display: flex; gap: 20px; align-items: stretch;
+      width: 100%; max-width: 1120px; margin: 0 auto;
     }
     .card {
       background: #1a2029; border: 1px solid #2a323d; border-radius: 12px;
-      padding: 24px; width: 100%; max-width: 560px;
+      padding: 24px; flex: 1 1 560px; max-width: 560px; order: 1;
     }
     .guide {
       flex: 1 1 340px; min-width: 300px; max-width: 440px;
-      background: #1a2029; border: 1px solid #2a323d; border-radius: 12px; padding: 24px;
+      background: #1a2029; border: 1px solid #2a323d; border-radius: 12px; padding: 24px; order: 2;
+    }
+    @media (max-width: 940px) {
+      .layout { flex-wrap: wrap; }
+      .card { max-width: 100%; }
     }
     .guide h2 { margin: 0 0 6px; font-size: 16px; }
     .guide .intro { margin: 0 0 14px; color: #9aa4b1; font-size: 13px; }
@@ -103,7 +107,7 @@ import { AuthService } from '../auth/auth.service';
     }
     button:disabled { opacity: .5; cursor: default; }
     button.danger { background: #b3303a; }
-    .link { background: none; color: #8ab4ff; border: none; padding: 0; margin: 0; cursor: pointer; font-size: 13px; }
+    .link { background: none; color: #8ab4ff; border: none; padding: 4px 8px; margin: 0; cursor: pointer; font-size: 13px; }
     .user-bar { display: flex; gap: 8px; align-items: center; }
     .error { color: #ff8a80; font-size: 13px; margin-top: 12px; }
     .result { margin-top: 20px; border-top: 1px solid #2a323d; padding-top: 16px; }

@@ -1023,6 +1023,40 @@ Open: safe/web TOTP_URL must point to the web deployment (not back /totp/web) on
   добавить `BACK_URL=https://pomi-doro.ru/totp` и опционально `WEB_BASE_HREF=/totp-web/`
   (без него дефолт и так /totp-web/). Local .env gitignored — на ранер не попадёт сам.
 
+## 2026-09-11 — Local dev: WEB_BACK_URL без схемы → блокировка (план)
+
+- Симптом (dev, origin http://localhost:4207): `Access to XMLHttpRequest at
+  'localhost:3278/totp/auth/login' was blocked... Cross origin requests are only
+  supported for protocol schemes: chrome, http, https,...` = URL БЕЗ scheme
+  (`localhost:...` парсится браузером как scheme localhost) → «новый сервер не нужен».
+- Подход: Angular dev-server HTTP proxy (same-origin, без CORS):
+  1. `web/.env`: `BACK_URL=` (empty) → `app.component.ts` fallback на dev `<base
+     href="/">` → API base `/totp` на :4207.
+  2. `web/proxy.conf.json`: `{"/totp": {"target": "http://localhost:3278",
+     "changeOrigin": true}}` → `/totp/...` c :4207 проксируется на :3278 (путь
+     сохраняется), как будто тот же origin. Server-side CORS не нужен.
+  3. `angular.json` serve.options += `"proxyConfig": "proxy.conf.json"`
+     (supports custom-webpack:dev-server).
+  4. `.env.example`: dev → пустой BACK_URL + proxy; prod → абсолютный BACK_URL в
+     safe envs (slave .env для workflow-build). Прод не меняется.
+
+### 2026-09-11 — ГОТОВО (dev-server proxy, проверено)
+
+- `web/.env`: `BACK_URL=` (empty) + комментарии (dev same-origin /totp; прод — в safe
+  envs у workflow-build).
+- `web/proxy.conf.json` (новый): `{"/totp": {"target": "http://127.0.0.1:3278",
+  "changeOrigin": true}}`. Нюанс: target ДОЛЖЕН быть `127.0.0.1`, а не `localhost` —
+  node резолвит localhost в `::1` (IPv6) → ECONNREFUSED, хотя curl/nc на
+  `localhost:3278` работают (IPv4).
+- `angular.json` serve.options += `"proxyConfig": "proxy.conf.json"`.
+- `.env.example`: задокументирован dev-режим (пустой BACK_URL + proxy).
+- Проверено E2E: `ng serve --port 4208` (не трогал ваш 4207) → GET / 200;
+  POST /totp/auth/login через прокси → 400 JSON от 3278 (same-origin, без CORS).
+- ВАЖНО: ваш работающий dev-сервер на :4207 начат ДО этих правок — нужно перезапустить
+  `npm start`, чтобы подхватить пустой BACK_URL + proxy.
+- Прод не затронут: workflow-build читает slave .env (safe envs), там BACK_URL должен
+  остаться https://pomi-doro.ru/totp.
+
 ## 2026-09-10 Progress: BACK_URL env implemented (web admin usable on another host)
 
 - webpack DefinePlugin now injects WEB_BACK_URL from .env BACK_URL (empty -> ''). src/types.d.ts declares it. app.component.ts: base = (WEB_BACK_URL || <base href>).replace(/\/+$/,''), fallback '/totp'.
