@@ -932,6 +932,53 @@ Open: safe/web TOTP_URL must point to the web deployment (not back /totp/web) on
 - Fix: build-time BACK_URL env injected via DefinePlugin as WEB_BACK_URL. When set (absolute, e.g. https://other-host/totp) the admin login/apps calls go there; when empty -> existing behavior (base href else /totp). Remote MF gate unaffected (its baseUrl comes from consumer @Input).
 - Files: web/.env + web/.env.example (BACK_URL=), webpack.config.js (DefinePlugin WEB_BACK_URL), src/types.d.ts (declare), src/app/app.component.ts (WEB_BACK_URL || base || '/totp').
 
+## 2026-09-11 — Deploy-web падает: nginx "location not allowed here" (план)
+
+- Симптом (лог deploy-web.yml): `nginx: [emerg] "location" directive is not allowed here
+  in /etc/nginx/sites-enabled/default:46` → `nginx -t` failed → deploy red.
+- Причина: `web/.github/workflows/deploy-web.yml` (шаг "Swap slot, configure nginx")
+  делал `cat >> "$CONF"` — блок `location /totp-web/` дописывался В КОНЕЦ файла, т.е.
+  ПОСЛЕ закрывающей `}` server-блока. `location` валиден только ВНУТРИ `server { }`.
+  В sites-enabled/default ОДИН server-блок (listen 80 + 443, /totp/ и / — proxy_pass).
+- Осложнение: невалидный хвост уже попал в файл сервера при упавшем ране, а guard
+  `grep -qF "location /totp-web/"` на следующем деплое его НЕ перезапишет (текст найден)
+  → деплой продолжит падать.
+- План:
+  1. Сейчас на сервере: вычистить невалидный хвост, вставить блок location ВНУТРЬ
+     server-блока (перед его закрывающей `}`), `nginx -t` + reload, смоук remoteEntry.
+  2. `deploy-web.yml`: заменить `cat >>` heredoc на `python3 -c` (без heredoc — он
+     уже ломался под appleboy/ssh-action в deploy-back, 2026-09-09), который вставляет
+     блок ПЕРЕД последней строкой `}` файла (внутри server-блока). Guard/bak/nginx -t
+     оставить. Прод smoke без изменений.
+  3. Проверка: python-логика на локальном фиксте (файл сервера), YAML парсится.
+- Отдельно: текущее состояние файла сервера проверено по SSH (cat) — вставка в один
+  server-блок корректна и совпадает с тем, как лежат location /totp/ и /.
+
+### 2026-09-11 — ГОТОВО (fix на сервере + workflow)
+
+- Сервер исправлен вручную:
+  - `default.bak.*` вынесены из `sites-enabled` в `/etc/nginx/backups/` (nginx-глоб
+    `include /etc/nginx/sites-enabled/*` парсил бэкапы и падал).
+  - `location /totp-web/` вставлен ВНУТРЬ server-блока (перед закрывающей `}`),
+    `nginx -t` OK, reload, смоук: remoteEntry.js 200 application/javascript (no-cache),
+    main-*.js immutable 31536000, https://pomi-doro.ru/totp-web/remoteEntry.js 200.
+  - `/root` получил `chmod o+x` (был 700 → www-data не мог пройти в /root/totp-web;
+    теперь o+x — traverse без r; .env/ключи защищены своими правами).
+- `web/.github/workflows/deploy-web.yml` (шаг nginx) переписан:
+  - heredoc `cat >>` (дописывал location ПОСЛЕ server-блока → «location not allowed
+    here») заменён на `python3 -c` (без heredoc — он уже ломался в deploy-back).
+  - python находит ПЕРВУЮ строку, где глубина скобок возвращается к 0 (закрывающая
+    `}` server-блока) и вставляет блок перед ней — всегда внутри server.
+  - бэкап пишется в `/etc/nginx/backups/default.bak.<ts>`, а не в sites-enabled.
+  - guard `grep -qF "location /totp-web/"` + `nginx -t` сохранены.
+- Проверено: YAML парсится; извлечённый ssh-скрипт `bash -n` OK; python-логика на
+  фиксте (исходный конфиг сервера) вставляет блок внутри server, бракеты сбалансированы,
+  результат структурно равен live-конфигу; повторный guard-матч = идемпотентность.
+- Следующий деплой deploy-web пройдёт без падения (конфиг уже валиден, guard пропустит
+  вставку, nginx -t + reload).
+- TODO на будущее: `git pull`/merge этих двух правок (DECISIONS.md + deploy-web.yml) в
+  slave-репо web → push → деплой.
+
 ## 2026-09-10 Progress: BACK_URL env implemented (web admin usable on another host)
 
 - webpack DefinePlugin now injects WEB_BACK_URL from .env BACK_URL (empty -> ''). src/types.d.ts declares it. app.component.ts: base = (WEB_BACK_URL || <base href>).replace(/\/+$/,''), fallback '/totp'.

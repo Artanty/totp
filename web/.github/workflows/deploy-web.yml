@@ -113,22 +113,41 @@ jobs:
 
           CONF=/etc/nginx/sites-enabled/default
           if ! grep -qF "location /totp-web/" "$CONF"; then
-            cp "$CONF" "$CONF.bak.$(date +%s)"
-            cat >> "$CONF" <<'NGINXEOF'
-
-          # TOTP web (Angular MF remote) - managed by deploy-web.yml
+            mkdir -p /etc/nginx/backups
+            cp "$CONF" "/etc/nginx/backups/default.bak.$(date +%s)"
+            python3 -c '
+          import sys
+          p = "/etc/nginx/sites-enabled/default"
+          conf = open(p).read()
+          lines = conf.split("\n")
+          depth = 0
+          end = None
+          for i, ln in enumerate(lines):
+              opens = ln.count("{")
+              closes = ln.count("}")
+              depth += opens - closes
+              if closes and depth == 0:
+                  end = i
+                  break
+          if end is None:
+              sys.exit("server-block closing brace not found")
+          block = """  # TOTP web (Angular MF remote) - managed by deploy-web.yml
           location /totp-web/ {
               root /root;
               index index.html;
               try_files $uri $uri/ /totp-web/index.html;
-              location ~ /totp-web/(remoteEntry\.js|index\.html)$ {
+              location ~ /totp-web/(remoteEntry\\.js|index\\.html)$ {
                   add_header Cache-Control "no-cache";
               }
-              location ~ /totp-web/[^?]*\.(js|css|ico|png|svg|webmanifest|txt)$ {
+              location ~ /totp-web/[^?]*\\.(js|css|ico|png|svg|webmanifest|txt)$ {
                   add_header Cache-Control "public, max-age=31536000, immutable";
               }
           }
-          NGINXEOF
+          """
+          new = "\n".join(lines[:end] + block.rstrip("\n").split("\n") + ["}"]) + "\n"
+          open(p, "w").write(new)
+          print("location /totp-web/ block inserted inside server block")
+          '
             nginx -t
           fi
 
