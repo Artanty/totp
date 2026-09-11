@@ -3,6 +3,8 @@ import { CommonModule } from '@angular/common';
 import { FormsModule } from '@angular/forms';
 import { AdminService, type App, type CreateAppResponse } from './admin.service';
 import { AuthService } from '../auth/auth.service';
+import { AuthFlowService } from '../auth-flow/auth-flow.service';
+import { TotpGuardService } from '../guard/totp-guard.service';
 
 @Component({
   selector: 'app-admin',
@@ -15,6 +17,7 @@ import { AuthService } from '../auth/auth.service';
 
         <div class="user-bar">
           <span>Signed in as <b>{{ auth.userEmail }}</b></span>
+          <button class="link" (click)="lock()" title="Lock TOTP session">lock</button>
           <button class="link" (click)="logout()">sign out</button>
         </div>
 
@@ -130,6 +133,8 @@ export class AdminComponent implements OnInit {
   constructor(
     private admin: AdminService,
     public auth: AuthService,
+    private guard: TotpGuardService,
+    private flow: AuthFlowService,
   ) {}
 
   ngOnInit(): void {
@@ -180,8 +185,14 @@ export class AdminComponent implements OnInit {
     });
   }
 
+  lock(): void {
+    this.guard.lock();
+    this.flow.reset();
+  }
+
   logout(): void {
+    this.guard.lock();
     this.auth.logout();
-    window.location.reload();
+    this.flow.reset();
   }
 }

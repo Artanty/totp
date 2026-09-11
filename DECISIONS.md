@@ -1187,3 +1187,15 @@ Open: safe/web TOTP_URL must point to the web deployment (not back /totp/web) on
 - Причина: уведомление `onStateChange` приходило ВНЕ Angular-зоны; сигнал `unlocked()` ставился, но `ApplicationRef.tick()` не гонялся → effect не сбрасывался (подтверждено: добавился zone-`setInterval` — стало работать). totp уже чинил это в `TotpGuardService` (обёртка в `ngZone.run`), в safe-web его не было.
 - Fix (safe/web `totp-auth.service.ts`, коммит `62bb102`): `onStateChange((state) => this.ngZone.run(() => this.setFromState(state)))`.
 - Проверено CDP: ввод кода → `AUTH_DONE` → shell (nav:true), без перезагрузки. `ng build` ../safe/web чисто.
+
+## 2026-09-11 — totp/web: lock (unlogin) button в admin как в safe/web (план)
+- В `admin.component.ts` добавить кнопку-замок в user-bar рядом с sign out:
+  - `lock()`: `guard.lock()` (сброс unlock-сессии TOTP, чистит localStorage) + `flow.reset()` → приложение снова показывает auth-feature/gate, без перезагрузки.
+  - `logout()` обновить: `guard.lock()` + `auth.logout()` + `flow.reset()` (вместо `window.location.reload()`) — полный unlogin, плавно обратно к gate.
+- После lock (JWT остаётся): повторный ввод кода → авто-complete effect → admin.
+- После logout: ввод кода → форма логина → admin.
+
+### lock/unlogin — реализовано
+- `admin.component.ts`: кнопка **lock** в user-bar → `guard.lock()` + `flow.reset()` (сброс TOTP-сессии, назад к gate, без reload).
+- `sign out` теперь тоже без reload: `guard.lock()` + `auth.logout()` + `flow.reset()` — полный unlogin, плавно к gate.
+- `ng build` totp/web чисто.
