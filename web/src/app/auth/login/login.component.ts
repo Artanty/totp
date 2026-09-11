@@ -1,4 +1,4 @@
-import { Component } from '@angular/core';
+import { Component, EventEmitter, Output } from '@angular/core';
 import { CommonModule } from '@angular/common';
 import { FormsModule } from '@angular/forms';
 import { AuthService } from '../auth.service';
@@ -55,6 +55,8 @@ import { AuthService } from '../auth.service';
   `],
 })
 export class LoginComponent {
+  @Output() loggedIn = new EventEmitter<void>();
+
   email = '';
   password = '';
   confirmPassword = '';
@@ -86,7 +88,7 @@ export class LoginComponent {
     req.subscribe({
       next: () => {
         this.submitting = false;
-        window.location.reload();
+        this.loggedIn.emit();
       },
       error: (err) => {
         this.submitting = false;
