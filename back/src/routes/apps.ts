@@ -136,7 +136,7 @@ async function appRoutes(app: FastifyInstance): Promise<void> {
       otpauthUri,
       qrDataUrl,
       integration: {
-        totp_service_url: process.env.TOTP_SERVICE_URL ?? '',
+        totp_service_url: process.env.TOTP_BACK_URL ?? '',
         totp_service_user: gateEmail,
         totp_service_password: gatePassword,
         totp_token_id: token.id,

@@ -1129,3 +1129,54 @@ Open: safe/web TOTP_URL must point to the web deployment (not back /totp/web) on
   и обновить safe/web, если захотим (тоже использует var-container? нет — safe уже на @module-federation/runtime).
   В dev-сервер возвращается обычный `npm start` (сейчас поднят с --live-reload=false для headless-тестов).
 - Servers: back на :3278 (node dist/index.js, relay активен), web dev на :4207.
+
+## 2026-09-11 — Рефакторинг: AUTH_DONE lifecycle + generic remoteApiRequest (план)
+
+### Декуплинг: стандартные артефакты для любого потребителя
+1. **Web (safe/web, totp/web): контракт `AUTH_DONE`**
+   - `src/app/auth-flow/` — модуль lifecycle (одинаковый в обоих проектах):
+     - `auth-flow.ts` — типы: `AuthPhase = 'boot' | 'auth' | 'done'`.
+     - `auth-flow.service.ts` — signals `phase`/`done()`; `complete()` → done + `document.dispatchEvent(new CustomEvent('AUTH_DONE'))`; `reset()`.
+     - `auth-feature.component.ts` — весь pre-app блок (loading → error/retry → `<safe-totp-gate>` → login для totp);
+       при полной аутентификации вызывает `complete()`.
+   - `app.component.ts` становится тонким: `@if (flow.done()) { <app/> } @else { <auth-feature/> }` — приложение (admin/dashboard) видно ТОЛЬКО после AUTH_DONE; до него — auth-feature.
+   - Из app.component уходит всё знание о TOTP/guard (в auth-feature).
+
+2. **Back (safe/back, totp/back): generic `remoteApiRequest`**
+   - `core/remoteApiRequest.ts` (одинаковая функция, имя файла по стилю репозитория):
+     `remoteApiRequest<T>({ urlEnv, method, path, params, timeout }) -> Promise<{ status, data }>`
+   - `urlEnv` = имя env-переменной с базовым URL, напр. `'TOTP_BACK_URL'`.
+   - Префикс креденшелов: `prefix = urlEnv.replace(/_URL$/, '')` → `${prefix}_USER`/`${prefix}_PASSWORD`;
+     если заданы → прозрачный JWT-login (`POST {base}/auth/login`), кэш, повторный login при 401.
+   - Возвращает `{ status, data }`; ошибки: `RemoteApiError` c кодами `REMOTE_UNREACHABLE` / `REMOTE_SERVER_ERROR`.
+   - Потребитель передаёт только method/path/params — транспорт прозрачный.
+
+### Что делаем в back
+- safe/back: удалить `core/totp_client.ts`; `routes/auth.ts` → `remoteApiRequest({ urlEnv:'TOTP_BACK_URL', method:'POST', path:'/tokens/{tokenId}/verify', params:{code} })`;
+  маппинг 401→Invalid code, REMOTE_*→502 (`TOTP_UNREACHABLE`/`TOTP_SERVER_ERROR` — контракт для web не меняется).
+  .env/.env.example: `TOTP_SERVICE_URL|USER|PASSWORD` → `TOTP_BACK_URL|USER|PASSWORD`.
+- totp/back: добавить идентичную копию remoteApiRequest (артефакт для будущих проектов);
+  `TOTP_SERVICE_URL` → `TOTP_BACK_URL` (echo в routes/apps.ts).
+
+### Что делаем в web
+- totp/web: auth-flow модуль; app.component → `@if (flow.done()) { <app-admin/> } @else { <auth-feature/> }`;
+  login больше НЕ делает `window.location.reload()` (эмитит `loggedIn` → complete()); роут `/login` убираем.
+- safe/web: auth-flow модуль (gate-only; unlock → complete); app.component → тонкий shell +
+  существующий dashboard за `flow.done()`; Omni-сервис TotpAuthService остаётся, но переносится в auth-feature.
+
+### Проверка
+- back: `npm run typecheck` (safe, totp) + sanity run remoteApiRequest против работающего totp-back (:3278, TOTP_TOKEN_ID=5).
+- web: `npm run build` (safe, totp) + CDP-smoke totp/web (cold → gate → код → AUTH_DONE → admin).
+
+### Рефакторинг — что сделано
+- **Отдельный коммит** `feat: totp-guard for totp (back relay + reusable loader/service)` = d8ab984.
+- **Back (оба проекта):** `remoteApiRequest({ urlEnv, method, path, params, timeout })` — копируемый, нулевые зависимости (global fetch), env-конвенция `<URL_ENV>_USER/PASSWORD`, прозрачный JWT-login + кэш + 1 retry при 401, `RemoteApiError` (REMOTE_UNREACHABLE / REMOTE_SERVER_ERROR), таймаут по умолчанию 10с.
+  - safe/back: `core/remote_api_request.ts` (snake_case), удалён `core/totp_client.ts`, `routes/auth.ts` → remoteApiRequest (маппинг 401→Invalid code, 502 TOTP_UNREACHABLE/TOTP_SERVER_ERROR сохранён). Env `TOTP_SERVICE_URL|USER|PASSWORD` → `TOTP_BACK_URL|USER|PASSWORD`.
+  - totp/back: `src/lib/remoteApiRequest.ts` (camelCase), `TOTP_SERVICE_URL` → `TOTP_BACK_URL` (.env, .env.example, echo в routes/apps.ts).
+- **Web (оба проекта):** контракт `AUTH_DONE`.
+  - `auth-flow/auth-flow.ts` + `auth-flow.service.ts` — идентичные в обоих (phase signal + computed done + complete() → CustomEvent('AUTH_DONE') + reset()).
+  - totp/web: `auth-flow/auth-feature.component.ts` (loading → error/retry → gate → login → complete()); `app.component.ts` тонкий (`@if (flow.done()) <app-admin/> @else <auth-feature [baseUrl]/`); login не делает reload — эмитит `loggedIn`; роут `/login` убран.
+  - safe/web: `auth-flow/auth-feature.component.ts` (loading → error/retry → gate; unlock → complete()); `app.component.ts` — только shell за `flow.done()`; lock() → auth.lock() + flow.reset().
+- **Сборки:** typecheck safe/back + totp/back чисто; `ng build` totp/web и safe/web чисто (только pre-existing бюджет-warning project-detail.component).
+- **Блокер проверки runtime:** MySQL на 185.114.247.197 отклоняет креды и safe (`cs99850_safe`) и totp (`cs99850_totp`) — креды в .env устарели/сервер заменил пароли. Код ок, e2e/remoteApiRequest-sanity не прогнать, пока креды не починят.
+- **Коммиты рефакторинга ещё не сделаны** (жду «go» на раздельные коммиты).
