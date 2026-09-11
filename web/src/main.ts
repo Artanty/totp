@@ -4,7 +4,6 @@ import { AppComponent } from './app/app.component';
 import { setTotpGateInjector } from './app/gate/gate.module';
 
 
-
 bootstrapApplication(AppComponent, appConfig)
   .then((appRef) => setTotpGateInjector(appRef.injector))
   .catch((err) => console.error(err));
