@@ -16,16 +16,35 @@ export class TotpGuardService {
   private remoteUrl = '';
   private baseUrl = '';
   private storagePrefix = 'safe_totp';
+  private token?: string;
+  private stateUrl?: string;
+  private stateMethod?: 'GET' | 'POST';
+  private stateParams?: Record<string, unknown>;
+  private verifyUrl?: string;
   private sessionPromise: Promise<TotpGuardSession> | null = null;
   private unsubscribe: (() => void) | null = null;
   private activeSession: TotpGuardSession | null = null;
 
   constructor(private ngZone: NgZone) {}
 
-  configure(options: { remoteUrl: string; baseUrl: string; storagePrefix?: string }): void {
+  configure(options: {
+    remoteUrl: string;
+    baseUrl: string;
+    storagePrefix?: string;
+    token?: string;
+    stateUrl?: string;
+    stateMethod?: 'GET' | 'POST';
+    stateParams?: Record<string, unknown>;
+    verifyUrl?: string;
+  }): void {
     this.remoteUrl = options.remoteUrl;
     this.baseUrl = options.baseUrl.replace(/\/+$/, '');
     this.storagePrefix = options.storagePrefix ?? 'safe_totp';
+    this.token = options.token;
+    this.stateUrl = options.stateUrl;
+    this.stateMethod = options.stateMethod;
+    this.stateParams = options.stateParams;
+    this.verifyUrl = options.verifyUrl;
   }
 
   async init(): Promise<void> {
@@ -84,6 +103,11 @@ export class TotpGuardService {
         remoteUrl: this.remoteUrl,
         baseUrl: this.baseUrl,
         storagePrefix: this.storagePrefix,
+        token: this.token,
+        stateUrl: this.stateUrl,
+        stateMethod: this.stateMethod,
+        stateParams: this.stateParams,
+        verifyUrl: this.verifyUrl,
       })
         .then(({ session }) => session)
         .catch((err) => {

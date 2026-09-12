@@ -1,7 +1,9 @@
-import { Component, EventEmitter, Output } from '@angular/core';
+import { Component, EventEmitter, OnInit, Output } from '@angular/core';
 import { CommonModule } from '@angular/common';
 import { FormsModule } from '@angular/forms';
 import { AuthService } from '../auth.service';
+
+const EMAIL_KEY = 'totp_login_email';
 
 @Component({
   selector: 'app-login',
@@ -54,7 +56,7 @@ import { AuthService } from '../auth.service';
     .error { color: #ff8a80; font-size: 13px; margin-top: 12px; }
   `],
 })
-export class LoginComponent {
+export class LoginComponent implements OnInit {
   @Output() loggedIn = new EventEmitter<void>();
 
   email = '';
@@ -65,6 +67,14 @@ export class LoginComponent {
   submitting = false;
 
   constructor(private auth: AuthService) {}
+
+  ngOnInit(): void {
+    try {
+      this.email = localStorage.getItem(EMAIL_KEY) ?? '';
+    } catch {
+      /* ignore storage errors */
+    }
+  }
 
   toggleMode(): void {
     this.authMode = this.authMode === 'login' ? 'register' : 'login';
@@ -88,6 +98,11 @@ export class LoginComponent {
     req.subscribe({
       next: () => {
         this.submitting = false;
+        try {
+          localStorage.setItem(EMAIL_KEY, this.email);
+        } catch {
+          /* ignore storage errors */
+        }
         this.loggedIn.emit();
       },
       error: (err) => {

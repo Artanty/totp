@@ -1,13 +1,13 @@
-import { Component, CUSTOM_ELEMENTS_SCHEMA, Input, NgZone, effect } from '@angular/core';
+import { Component, CUSTOM_ELEMENTS_SCHEMA, Input, NgZone, effect, signal } from '@angular/core';
 import { AuthFlowService } from './auth-flow.service';
 import { TotpGuardService } from '../guard/totp-guard.service';
 import { AuthService } from '../auth/auth.service';
 import { LoginComponent } from '../auth/login/login.component';
 
 /**
- * Everything shown before AUTH_DONE: loading, error+retry, the TOTP gate and —
- * after the gate is unlocked — the login form. Calls flow.complete() once the
- * user is fully authenticated.
+ * totp/web admin flow, reordered: login FIRST, then the authenticated TOTP
+ * gate (admin JWT + direct /auth/totp/init|verify endpoints). complete() runs
+ * once the gate is unlocked for a logged-in user.
  */
 @Component({
   selector: 'auth-feature',
@@ -15,23 +15,25 @@ import { LoginComponent } from '../auth/login/login.component';
   imports: [LoginComponent],
   schemas: [CUSTOM_ELEMENTS_SCHEMA],
   template: `
-    @if (guardEnabled && !guard.ready()) {
+    @if (!guardEnabled) {
+      <app-login (loggedIn)="complete()"></app-login>
+    } @else if (!loggedIn()) {
+      <app-login (loggedIn)="onLoggedIn()"></app-login>
+    } @else if (!guard.ready()) {
       <div class="guard-screen">
         <div class="guard-card">
           <div class="spinner"></div>
           <p class="guard-text">Подключение к серверу...</p>
         </div>
       </div>
-    } @else if (guardEnabled && guard.stateFailed()) {
+    } @else if (guard.stateFailed()) {
       <div class="guard-screen">
         <div class="guard-card">
           <p class="guard-text">Нет соединения с сервером</p>
           <button class="refresh-btn" (click)="retry()">Обновить</button>
         </div>
       </div>
-    } @else if (!guardEnabled || guard.unlocked()) {
-      <app-login (loggedIn)="complete()"></app-login>
-    } @else {
+    } @else if (!guard.unlocked()) {
       <div class="guard-screen">
         <safe-totp-gate [baseUrl]="baseUrl" [session]="guard.session()"></safe-totp-gate>
       </div>
@@ -78,7 +80,8 @@ import { LoginComponent } from '../auth/login/login.component';
 })
 export class AuthFeatureComponent {
   @Input() baseUrl = '/totp';
-  readonly guardEnabled = !!TOTP_URL;
+  readonly guardEnabled = !!TOTP_URL && !BYPASS_TOTP;
+  readonly loggedIn = signal(false);
 
   constructor(
     public guard: TotpGuardService,
@@ -86,19 +89,32 @@ export class AuthFeatureComponent {
     private flow: AuthFlowService,
     private ngZone: NgZone
   ) {
+    if (!TOTP_URL) this.flow.complete();
     effect(() => {
-      const gated = this.guardEnabled && !this.guard.unlocked();
-      if (!gated && this.auth.isLoggedIn) this.ngZone.run(() => this.flow.complete());
+      if (this.loggedIn() && this.guard.unlocked()) {
+        this.ngZone.run(() => this.flow.complete());
+      }
     });
   }
 
-  ngOnInit(): void {
-    if (TOTP_URL) {
-      this.guard.configure({ remoteUrl: TOTP_URL, baseUrl: this.baseUrl });
-      void this.guard.init();
-    } else {
+  onLoggedIn(): void {
+    this.loggedIn.set(true);
+    if (!TOTP_URL) {
       this.flow.complete();
+      return;
     }
+    const tokenId = Number(TOTP_GATE_TOKEN_ID);
+    this.guard.configure({
+      remoteUrl: TOTP_URL,
+      baseUrl: this.baseUrl,
+      storagePrefix: 'safe_totp',
+      token: this.auth.token ?? undefined,
+      stateUrl: `${this.baseUrl}/auth/totp/init`,
+      stateMethod: 'POST',
+      stateParams: Number.isInteger(tokenId) && tokenId > 0 ? { tokenId } : undefined,
+      verifyUrl: `${this.baseUrl}/auth/totp/verify`,
+    });
+    void this.guard.init();
   }
 
   retry(): void {

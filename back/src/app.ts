@@ -8,7 +8,6 @@ import authRoutes from './routes/auth.js';
 import tokenRoutes from './routes/tokens.js';
 import appRoutes from './routes/apps.js';
 import totpGuardRoutes from './routes/totpGuard.js';
-import { getGuardTokenId } from './lib/totpGuard.js';
 
 declare module 'fastify' {
   interface FastifyInstance {
@@ -29,10 +28,7 @@ export function buildApp(): FastifyInstance {
   app.register(authRoutes, { prefix: `${apiPrefix}/auth` });
   app.register(tokenRoutes, { prefix: `${apiPrefix}/tokens` });
   app.register(appRoutes, { prefix: `${apiPrefix}/apps` });
-
-  if (getGuardTokenId() !== null) {
-    app.register(totpGuardRoutes, { prefix: `${apiPrefix}/auth/totp` });
-  }
+  app.register(totpGuardRoutes, { prefix: `${apiPrefix}/auth/totp` });
 
   const requestLogSkipPrefixes = [`${apiPrefix}/get-updates`];
 

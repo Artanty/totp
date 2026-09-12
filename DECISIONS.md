@@ -1296,3 +1296,12 @@ Open: safe/web TOTP_URL must point to the web deployment (not back /totp/web) on
 - Причина: `:host` `padding: 40px 16px` + `.guard-screen` `min-height: 100vh` →
   суммарная высота 100vh+80px → вертикальный скролл. Убрал вертикальный паддинг
   (`padding: 0 16px`) → ровно 100vh, скролла нет. Билд чистый.
+
+## 2026-09-12 — Login: запоминать введённый email в localStorage (план)
+- В `web/src/app/auth/login/login.component.ts`: при инициализации подставлять saved-email,
+  при успешном входе/регистрации сохранять `localStorage['totp_login_email']`.
+  Хранилище как везде (try/catch, ignore ошибок). Проверка: `npm run build`.
+
+### Progress (2026-09-12) — ГОТОВО
+- LoginComponent: сохранение email на успешном submit (login/register), подстановка на init.
+- `npm run build` чистый.

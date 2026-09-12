@@ -6,7 +6,7 @@
  *
  * Contract with the consumer's backend relay:
  *   GET  {baseUrl}/auth/totp/state  -> { nonce }
- *   POST {baseUrl}/auth/totp/verify { code } -> { valid, expiresAt?, nonce }
+ *   POST {baseUrl}/auth/totp/verify { code, nonce } -> { valid, expiresAt?, nonce, sessionTokenB? }
  */
 
 import { init, loadRemote } from '@module-federation/runtime';
@@ -21,6 +21,7 @@ export type TotpGuardVerifyResponse = {
   valid: boolean;
   expiresAt?: string;
   nonce?: string;
+  sessionTokenB?: string;
 };
 
 export type TotpGuardSession = {
@@ -45,10 +46,28 @@ export type TotpGuardOptions = {
   runtimeName?: string;
   /** Name of the remote container. Default 'totp'. */
   remoteName?: string;
+  /** Bearer JWT sent as `Authorization` on every request (authenticated gate). */
+  token?: string;
+  /** State endpoint. Default `${baseUrl}/auth/totp/state`. */
+  stateUrl?: string;
+  /** State method. Default 'GET'. */
+  stateMethod?: 'GET' | 'POST';
+  /** JSON body sent with a POST state request (e.g. { tokenId }). */
+  stateParams?: Record<string, unknown>;
+  /** Verify endpoint. Default `${baseUrl}/auth/totp/verify`. */
+  verifyUrl?: string;
 };
 
 type TotpCoreModule = {
-  createTotpSession(config: { baseUrl: string; storagePrefix?: string }): TotpGuardSession;
+  createTotpSession(config: {
+    baseUrl: string;
+    storagePrefix?: string;
+    token?: string;
+    stateUrl?: string;
+    stateMethod?: 'GET' | 'POST';
+    stateParams?: Record<string, unknown>;
+    verifyUrl?: string;
+  }): TotpGuardSession;
 };
 type TotpGateModule = { registerTotpGate(): Promise<void> };
 
@@ -74,6 +93,11 @@ export async function loadTotpGuard(options: TotpGuardOptions): Promise<{ sessio
   const session = core.createTotpSession({
     baseUrl: options.baseUrl,
     storagePrefix: options.storagePrefix,
+    token: options.token,
+    stateUrl: options.stateUrl,
+    stateMethod: options.stateMethod,
+    stateParams: options.stateParams,
+    verifyUrl: options.verifyUrl,
   });
   return { session };
 }

@@ -22,12 +22,18 @@ export function createTotpSession(config: TotpSessionConfig): TotpSession {
   const prefix = config.storagePrefix ?? 'safe_totp';
   const unlockedAtKey = `${prefix}_unlocked_at`;
   const nonceKey = `${prefix}_unlocked_nonce`;
+  const sessionTokenKey = `${prefix}_session_token`;
   const sessionMs = config.sessionMs ?? DEFAULT_SESSION_MS;
   const checkIntervalMs = config.checkIntervalMs ?? DEFAULT_CHECK_INTERVAL_MS;
   const stateTimeoutMs = config.stateTimeoutMs ?? DEFAULT_STATE_TIMEOUT_MS;
   const stateRetries = config.stateRetries ?? DEFAULT_STATE_RETRIES;
   const stateRetryDelayMs =
     config.stateRetryDelayMs ?? DEFAULT_STATE_RETRY_DELAY_MS;
+  const stateUrl = config.stateUrl ?? `${baseUrl}/auth/totp/state`;
+  const stateMethod = config.stateMethod ?? 'GET';
+  const stateParams = config.stateParams;
+  const verifyUrl = config.verifyUrl ?? `${baseUrl}/auth/totp/verify`;
+  const token = config.token;
 
   const listeners = new Set<(state: TotpSessionState) => void>();
   const state: TotpSessionState = {
@@ -36,6 +42,7 @@ export function createTotpSession(config: TotpSessionConfig): TotpSession {
     stateFailed: false,
   };
   let watchdog: ReturnType<typeof setInterval> | undefined;
+  let lastNonce = '';
 
   const emit = () => {
     const snapshot: TotpSessionState = { ...state };
@@ -63,9 +70,16 @@ export function createTotpSession(config: TotpSessionConfig): TotpSession {
     try {
       localStorage.removeItem(unlockedAtKey);
       localStorage.removeItem(nonceKey);
+      localStorage.removeItem(sessionTokenKey);
     } catch {
       /* ignore storage errors */
     }
+  };
+
+  const buildHeaders = (): Record<string, string> => {
+    const headers: Record<string, string> = { 'Content-Type': 'application/json' };
+    if (token) headers['Authorization'] = `Bearer ${token}`;
+    return headers;
   };
 
   const checkExpiry = () => {
@@ -91,12 +105,14 @@ export function createTotpSession(config: TotpSessionConfig): TotpSession {
 
   async function fetchWithTimeout(
     url: string,
+    init: RequestInit | undefined,
     timeoutMs: number,
   ): Promise<Response> {
     const controller = new AbortController();
     const timer = setTimeout(() => controller.abort(), timeoutMs);
     try {
       return await fetch(url, {
+        ...init,
         signal: controller.signal,
         credentials: 'same-origin',
       });
@@ -107,6 +123,7 @@ export function createTotpSession(config: TotpSessionConfig): TotpSession {
 
   async function fetchWithRetry(
     url: string,
+    init: RequestInit | undefined,
     retries: number,
     delayMs: number,
     timeoutMs: number,
@@ -114,7 +131,7 @@ export function createTotpSession(config: TotpSessionConfig): TotpSession {
     let lastError: unknown;
     for (let attempt = 0; attempt <= retries; attempt++) {
       try {
-        return await fetchWithTimeout(url, timeoutMs);
+        return await fetchWithTimeout(url, init, timeoutMs);
       } catch (err) {
         lastError = err;
         if (attempt < retries) await sleep(delayMs);
@@ -125,13 +142,19 @@ export function createTotpSession(config: TotpSessionConfig): TotpSession {
 
   async function init(): Promise<void> {
     try {
+      const stateInit: RequestInit = { method: stateMethod, headers: buildHeaders() };
+      if (stateMethod === 'POST' && stateParams) {
+        stateInit.body = JSON.stringify(stateParams);
+      }
       const response = await fetchWithRetry(
-        `${baseUrl}/auth/totp/state`,
+        stateUrl,
+        stateInit,
         stateRetries,
         stateRetryDelayMs,
         stateTimeoutMs,
       );
       const data = (await response.json()) as { nonce?: string };
+      lastNonce = data.nonce ?? '';
       const nonce = readString(nonceKey);
       const savedAt = readNumber(unlockedAtKey);
       const valid =
@@ -139,7 +162,10 @@ export function createTotpSession(config: TotpSessionConfig): TotpSession {
         nonce === data.nonce &&
         savedAt > 0 &&
         Date.now() - savedAt < sessionMs;
-      if (!valid) clearSession();
+      if (!valid) {
+        clearSession();
+        lastNonce = data.nonce ?? '';
+      }
       state.unlocked = valid;
       state.stateFailed = false;
       if (valid) startWatchdog();
@@ -162,11 +188,11 @@ export function createTotpSession(config: TotpSessionConfig): TotpSession {
   }
 
   async function verify(code: string): Promise<TotpVerifyResponse> {
-    const response = await fetch(`${baseUrl}/auth/totp/verify`, {
+    const response = await fetch(verifyUrl, {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
+      headers: buildHeaders(),
       credentials: 'same-origin',
-      body: JSON.stringify({ code }),
+      body: JSON.stringify({ code, nonce: lastNonce }),
     });
     if (!response.ok) {
       const error = new Error(
@@ -180,7 +206,15 @@ export function createTotpSession(config: TotpSessionConfig): TotpSession {
       }
       throw error;
     }
-    return (await response.json()) as TotpVerifyResponse;
+    const result = (await response.json()) as TotpVerifyResponse;
+    if (result.sessionTokenB) {
+      try {
+        localStorage.setItem(sessionTokenKey, result.sessionTokenB);
+      } catch {
+        /* ignore storage errors */
+      }
+    }
+    return result;
   }
 
   function unlock(nonce?: string): void {
@@ -198,6 +232,7 @@ export function createTotpSession(config: TotpSessionConfig): TotpSession {
   function lock(): void {
     stopWatchdog();
     clearSession();
+    lastNonce = '';
     state.unlocked = false;
     emit();
   }

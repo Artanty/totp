@@ -24,6 +24,8 @@ module.exports = (config) => {
       TOTP_GATE_VERSION: JSON.stringify(process.env.TAG_VERSION || '0.0.0.0.0.0'),
       WEB_BACK_URL: JSON.stringify(process.env.BACK_URL || ''),
       TOTP_URL: JSON.stringify(process.env.TOTP_URL || ''),
+      TOTP_GATE_TOKEN_ID: JSON.stringify(process.env.TOTP_GATE_TOKEN_ID || ''),
+      BYPASS_TOTP: JSON.stringify(process.env.BYPASS_TOTP === 'true'),
     }),
   ];
   config.optimization = config.optimization || {};

@@ -10,28 +10,30 @@ datasource db {
 }
 
 model User {
-  id           Int      @id @default(autoincrement())
-  email        String   @unique
+  id           Int            @id @default(autoincrement())
+  email        String         @unique
   passwordHash String
-  createdAt    DateTime @default(now())
+  createdAt    DateTime       @default(now())
   tokens       Token[]
-  adminApps    App[]    @relation("AppAdmin")
-  gateFor      App[]    @relation("AppGateUser")
+  adminApps    App[]          @relation("AppAdmin")
+  gateFor      App[]          @relation("AppGateUser")
+  gateSessions GateSession[]  @relation("UserGateSessions")
 }
 
 model Token {
-  id        Int      @id @default(autoincrement())
-  userId    Int
-  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
-  label     String
-  issuer    String?
-  account   String?
-  digits    Int      @default(6)
-  period    Int      @default(30)
-  algorithm String   @default("SHA1")
-  secretEnc String
-  createdAt DateTime @default(now())
-  app       App?
+  id           Int            @id @default(autoincrement())
+  userId       Int
+  user         User           @relation(fields: [userId], references: [id], onDelete: Cascade)
+  label        String
+  issuer       String?
+  account      String?
+  digits       Int            @default(6)
+  period       Int            @default(30)
+  algorithm    String         @default("SHA1")
+  secretEnc    String
+  createdAt    DateTime       @default(now())
+  app          App?
+  gateSessions GateSession[]  @relation("TokenGateSessions")
 
   @@index([userId])
 }
@@ -49,4 +51,19 @@ model App {
   createdAt  DateTime @default(now())
 
   @@index([adminId])
+}
+
+model GateSession {
+  id        Int      @id @default(autoincrement())
+  userId    Int
+  user      User     @relation("UserGateSessions", fields: [userId], references: [id], onDelete: Cascade)
+  tokenId   Int
+  token     Token    @relation("TokenGateSessions", fields: [tokenId], references: [id], onDelete: Cascade)
+  nonce     String   @unique
+  state     String   @default("pending")
+  expiresAt DateTime
+  createdAt DateTime @default(now())
+
+  @@index([userId])
+  @@index([nonce])
 }
