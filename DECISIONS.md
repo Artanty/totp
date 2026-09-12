@@ -1277,3 +1277,22 @@ Open: safe/web TOTP_URL must point to the web deployment (not back /totp/web) on
   3) safe/web totp-auth.service.ts lock() аналогично.
   Build: totp-web prod OK (main.6fed5826ac34aabf.js), safe web prod OK (бюджетный warning старый).
 - TODO user: rebuild+redeploy totp-web на поми-дору (remote также чинит safe gate).
+
+## 2026-09-12 — totp-guard по центру экрана (план)
+
+- Требование юзера: `<safe-totp-gate>` (totp-guard на auth-feature-экране) центрировать на экране.
+- Верификация: собрать web, поднять стаб (dist/web на :4207 + моки `/totp/auth/totp/state` и
+  `/totp/auth/totp/verify`), снять скрин headless Chrome → оценить позицию карточки.
+- Возможные места правки (по итогам скриншота): gate.component.ts (`.gate` flex/height) и/или
+  auth-feature.component.ts (`:host` flex) — добиться вертикального/горизонтального центрирования.
+- Проверка: скриншот ДО и ПОСЛЕ; `npm run build` чистый.
+
+### 2026-09-12 — ГОТОВО
+- `web/src/app/auth-flow/auth-feature.component.ts`: ветка гейта обёрнута в `.guard-screen`
+  (как loading/error); `.guard-screen` `min-height: 60vh` → `100vh` → все три состояния
+  центрируются на весь экран. Внутренний `.gate` гейта центрирует карточку.
+- `npm run build` в web/ чистый. Шаблон гейта (общий remote для safe/web) не менялся.
+### 2026-09-12 — Fix: скроллбар на gate-вью
+- Причина: `:host` `padding: 40px 16px` + `.guard-screen` `min-height: 100vh` →
+  суммарная высота 100vh+80px → вертикальный скролл. Убрал вертикальный паддинг
+  (`padding: 0 16px`) → ровно 100vh, скролла нет. Билд чистый.

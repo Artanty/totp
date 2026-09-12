@@ -32,7 +32,9 @@ import { LoginComponent } from '../auth/login/login.component';
     } @else if (!guardEnabled || guard.unlocked()) {
       <app-login (loggedIn)="complete()"></app-login>
     } @else {
-      <safe-totp-gate [baseUrl]="baseUrl" [session]="guard.session()"></safe-totp-gate>
+      <div class="guard-screen">
+        <safe-totp-gate [baseUrl]="baseUrl" [session]="guard.session()"></safe-totp-gate>
+      </div>
     }
   `,
   styles: [`
@@ -41,14 +43,14 @@ import { LoginComponent } from '../auth/login/login.component';
       justify-content: center;
       width: 100%;
       min-height: 100vh;
-      padding: 40px 16px;
+      padding: 0 16px;
     }
     .guard-screen {
       display: flex;
       align-items: center;
       justify-content: center;
       width: 100%;
-      min-height: 60vh;
+      min-height: 100vh;
     }
     .guard-card { text-align: center; }
     .spinner {
