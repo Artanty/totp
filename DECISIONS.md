@@ -1313,3 +1313,26 @@ Open: safe/web TOTP_URL must point to the web deployment (not back /totp/web) on
 - `startGate()` вынесен из `onLoggedIn()` (configure + init) — переиспользуется и при авто-входе.
   С сохранённым unlocked-состоянием gate сразу complete → админка; с сохранённым JWT без unlock →
   только ввод кода. `npm run build` чистый.
+
+### 2026-09-12 — Dev-баг: GET /totp/auth/totp/state (404) (план+done)
+- Симптом: в dev на весь gate-экран `GET http://localhost:4207/totp/auth/totp/state` 404
+  (фронт на :4207 self-hosted remote + proxy `/totp` → back :3278; back больше не имеет
+  GET /state, только POST /auth/totp/init|verify с JWT).
+- Диагностика headless Chrome (CDP, /tmp/*probe*.mjs), fresh профиль:
+  init: POST /auth/totp/init (host-сессия, корректный config). Через ~20ms после него —
+  GET /auth/totp/state (лишний). Boot без JWT запросов не даёт; после логина/reload-c-JWT — всегда.
+- Причина (подтверждено инструментированием): host-сессия задаётся через Angular Elements
+  custom element `<safe-totp-gate baseUrl session>`. Angular применяет входы в порядке записи:
+  `baseUrl` раньше `session`. Пёрвый же `ngOnChanges(baseUrl)` (при `this.session` ещё null)
+  создавал ВНУТРЕННЮЮ fallback-сессию `createTotpSession({baseUrl})` с ДЕФОЛТНЫМ
+  `stateUrl = baseUrl/auth/totp/state` и звал `init()`; следом приходил `session`,
+  внутренняя сессия dispose-илась, НО in-flight fetch уже ушёл → 404.
+- Fix в `web/src/app/gate/gate.component.ts`: создание внутренней сессии отложено на
+  macrotask (`deferInternalSession()`), к моменту срабатывания timer вход `session` уже
+  применён → внутренняя сессия не создаётся, GET /state не уходит. Таймер отменяется в
+  ngOnChanges(session) и ngOnDestroy. Standalone-режим (только baseUrl, без session)
+  по-прежнему работает.
+- Подтверждено: тот же CDP-probe (stateprobe2.mjs) — `atState` пустой (GET /state не уходит,
+  только POST /init). `npm run build` чистый. Пробный временный guard в auth-feature
+  (spinner до session()) откатан — корневая причина была в gate. Отдельно: /init 404 у
+  probe-юзера ожидаемо (tokenId=5 принадлежит другому юзеру).

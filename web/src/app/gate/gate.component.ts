@@ -201,6 +201,7 @@ export class GateComponent implements OnChanges, OnDestroy {
   gateVersion = TOTP_GATE_VERSION ?? '0.0.0.0.0.0';
 
   private internalSession: TotpSession | null = null;
+  private internalInitTimer: ReturnType<typeof setTimeout> | null = null;
   private activeSession: TotpSession | null = null;
   private unsubscribe: (() => void) | null = null;
   mergedTexts: TotpGateTexts = { ...DEFAULT_TEXTS };
@@ -216,14 +217,22 @@ export class GateComponent implements OnChanges, OnDestroy {
       this.logoUrl = this.logo || getLogoUrl();
     }
     if (changes['session']) {
+      if (this.internalInitTimer) {
+        clearTimeout(this.internalInitTimer);
+        this.internalInitTimer = null;
+      }
       this.setupSession();
     }
     if (changes['baseUrl'] && this.baseUrl && !this.session) {
-      this.setupSession();
+      this.deferInternalSession();
     }
   }
 
   ngOnDestroy(): void {
+    if (this.internalInitTimer) {
+      clearTimeout(this.internalInitTimer);
+      this.internalInitTimer = null;
+    }
     this.activeSession?.dispose();
     this.unsubscribe?.();
   }
@@ -319,6 +328,15 @@ export class GateComponent implements OnChanges, OnDestroy {
     const input = inputs[index] as HTMLInputElement | undefined;
     input?.focus();
     input?.select();
+  }
+
+  private deferInternalSession(): void {
+    if (this.internalInitTimer) return;
+    this.internalInitTimer = setTimeout(() => {
+      this.internalInitTimer = null;
+      if (this.session || !this.baseUrl) return;
+      this.setupSession();
+    });
   }
 
   private setupSession(): void {
