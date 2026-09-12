@@ -1305,3 +1305,11 @@ Open: safe/web TOTP_URL must point to the web deployment (not back /totp/web) on
 ### Progress (2026-09-12) — ГОТОВО
 - LoginComponent: сохранение email на успешном submit (login/register), подстановка на init.
 - `npm run build` чистый.
+
+### 2026-09-12 — Уточнение: «если аккаунт введён — не вводить заново» (план+done)
+- Требование юзера: одного ввода аккаунта достаточно — при следующем заходе НЕ показывать login.
+- AuthService уже хранит JWT в `localStorage['totp_jwt']` → на старте `auth-feature.component.ts`
+  восстанавливает сессию: `loggedIn.set(auth.isLoggedIn)` (guardEnabled) и сразу `startGate()`.
+- `startGate()` вынесен из `onLoggedIn()` (configure + init) — переиспользуется и при авто-входе.
+  С сохранённым unlocked-состоянием gate сразу complete → админка; с сохранённым JWT без unlock →
+  только ввод кода. `npm run build` чистый.

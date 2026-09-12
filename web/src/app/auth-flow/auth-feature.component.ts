@@ -89,20 +89,20 @@ export class AuthFeatureComponent {
     private flow: AuthFlowService,
     private ngZone: NgZone
   ) {
+    if (this.guardEnabled && this.auth.isLoggedIn) {
+      this.loggedIn.set(true);
+    }
     if (!TOTP_URL) this.flow.complete();
     effect(() => {
       if (this.loggedIn() && this.guard.unlocked()) {
         this.ngZone.run(() => this.flow.complete());
       }
     });
+    if (this.loggedIn()) this.startGate();
   }
 
-  onLoggedIn(): void {
-    this.loggedIn.set(true);
-    if (!TOTP_URL) {
-      this.flow.complete();
-      return;
-    }
+  private startGate(): void {
+    if (!TOTP_URL) return;
     const tokenId = Number(TOTP_GATE_TOKEN_ID);
     this.guard.configure({
       remoteUrl: TOTP_URL,
@@ -115,6 +115,15 @@ export class AuthFeatureComponent {
       verifyUrl: `${this.baseUrl}/auth/totp/verify`,
     });
     void this.guard.init();
+  }
+
+  onLoggedIn(): void {
+    this.loggedIn.set(true);
+    if (!TOTP_URL) {
+      this.flow.complete();
+      return;
+    }
+    this.startGate();
   }
 
   retry(): void {
