@@ -143,8 +143,8 @@ export function createTotpSession(config: TotpSessionConfig): TotpSession {
   async function init(): Promise<void> {
     try {
       const stateInit: RequestInit = { method: stateMethod, headers: buildHeaders() };
-      if (stateMethod === 'POST' && stateParams) {
-        stateInit.body = JSON.stringify(stateParams);
+      if (stateMethod === 'POST') {
+        stateInit.body = JSON.stringify(stateParams ?? {});
       }
       const response = await fetchWithRetry(
         stateUrl,

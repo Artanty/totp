@@ -1,4 +1,4 @@
-import { Component, CUSTOM_ELEMENTS_SCHEMA, Input, NgZone, effect, signal } from '@angular/core';
+import { Component, CUSTOM_ELEMENTS_SCHEMA, Input, NgZone, OnInit, effect, signal } from '@angular/core';
 import { AuthFlowService } from './auth-flow.service';
 import { TotpGuardService } from '../guard/totp-guard.service';
 import { AuthService } from '../auth/auth.service';
@@ -78,10 +78,15 @@ import { LoginComponent } from '../auth/login/login.component';
     .refresh-btn:hover { background: #0f1419; }
   `],
 })
-export class AuthFeatureComponent {
+export class AuthFeatureComponent implements OnInit {
   @Input() baseUrl = '/totp';
-  readonly guardEnabled = !!TOTP_URL && !BYPASS_TOTP;
+  readonly bypass = signal(false);
+  readonly statusChecked = signal(false);
   readonly loggedIn = signal(false);
+
+  get guardEnabled(): boolean {
+    return !!TOTP_URL && !this.bypass();
+  }
 
   constructor(
     public guard: TotpGuardService,
@@ -89,21 +94,41 @@ export class AuthFeatureComponent {
     private flow: AuthFlowService,
     private ngZone: NgZone
   ) {
-    if (this.guardEnabled && this.auth.isLoggedIn) {
-      this.loggedIn.set(true);
-    }
+    if (this.auth.isLoggedIn) this.loggedIn.set(true);
     if (!TOTP_URL) this.flow.complete();
     effect(() => {
       if (this.loggedIn() && this.guard.unlocked()) {
         this.ngZone.run(() => this.flow.complete());
       }
     });
-    if (this.loggedIn()) this.startGate();
+    effect(() => {
+      if (!this.statusChecked()) return;
+      if (this.loggedIn() && !this.guardEnabled) {
+        this.ngZone.run(() => this.flow.complete());
+        return;
+      }
+      if (this.loggedIn() && this.guardEnabled) this.startGate();
+    });
+  }
+
+  ngOnInit(): void {
+    if (!TOTP_URL) return;
+    void fetch(`${this.baseUrl}/auth/totp/status`)
+      .then((res) => (res.ok ? res.json() : null))
+      .then((data: { bypass?: boolean } | null) => {
+        this.ngZone.run(() => {
+          this.bypass.set(data?.bypass === true);
+          this.statusChecked.set(true);
+        });
+      })
+      .catch(() => {
+        // Fail closed: if status is unreachable, keep the gate required.
+        this.ngZone.run(() => this.statusChecked.set(true));
+      });
   }
 
   private startGate(): void {
     if (!TOTP_URL) return;
-    const tokenId = Number(TOTP_GATE_TOKEN_ID);
     this.guard.configure({
       remoteUrl: TOTP_URL,
       baseUrl: this.baseUrl,
@@ -111,7 +136,6 @@ export class AuthFeatureComponent {
       token: this.auth.token ?? undefined,
       stateUrl: `${this.baseUrl}/auth/totp/init`,
       stateMethod: 'POST',
-      stateParams: Number.isInteger(tokenId) && tokenId > 0 ? { tokenId } : undefined,
       verifyUrl: `${this.baseUrl}/auth/totp/verify`,
     });
     void this.guard.init();
@@ -123,7 +147,7 @@ export class AuthFeatureComponent {
       this.flow.complete();
       return;
     }
-    this.startGate();
+    if (this.guardEnabled) this.startGate();
   }
 
   retry(): void {

@@ -1,0 +1,1 @@
+export const BYPASS_TOTP = process.env.BYPASS_TOTP === 'true';

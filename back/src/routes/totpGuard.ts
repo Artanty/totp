@@ -3,8 +3,10 @@ import { randomUUID } from 'node:crypto';
 import { decryptSecret } from '../lib/crypto.js';
 import { verifyTotp } from '../lib/totp.js';
 import { TOTP_GUARD_SESSION_MS } from '../lib/totpGuard.js';
+import { BYPASS_TOTP } from '../lib/config.js';
 
 const TOTP_CODE_RE = /^\d{6}$/;
+const DEFAULT_GATE_TOKEN_ID = Number(process.env.TOTP_TOKEN_ID);
 
 interface IpBuckets {
   count: number;
@@ -49,8 +51,24 @@ function parseTokenId(value: unknown): number | null {
   return Number.isInteger(id) && id > 0 ? id : null;
 }
 
+async function resolveGateTokenId(
+  app: FastifyInstance,
+  userId: number,
+  tokenId: number,
+): Promise<number | null> {
+  const gateApp = await app.prisma.app.findFirst({
+    where: {
+      tokenId,
+      OR: [{ adminId: userId }, { gateUserId: userId }],
+    },
+  });
+  return gateApp ? gateApp.tokenId : null;
+}
+
 export default async function totpGuardRoutes(app: FastifyInstance): Promise<void> {
   const opts = { onRequest: [app.authenticate] };
+
+  app.get('/status', async () => ({ bypass: BYPASS_TOTP }));
 
   app.post('/init', opts, async (request: FastifyRequest, reply: FastifyReply) => {
     const body = request.body as InitBody | undefined;
@@ -58,20 +76,17 @@ export default async function totpGuardRoutes(app: FastifyInstance): Promise<voi
 
     let tokenId: number;
     if (requestedTokenId !== null) {
-      const token = await app.prisma.token.findFirst({
-        where: { id: requestedTokenId, userId: request.user.id },
-      });
-      if (token) {
-        tokenId = token.id;
-      } else {
-        const adminApp = await app.prisma.app.findFirst({
-          where: { adminId: request.user.id, tokenId: requestedTokenId },
-        });
-        if (!adminApp) {
-          return reply.code(404).send({ error: 'Token not found' });
-        }
-        tokenId = adminApp.tokenId;
+      const resolved = await resolveGateTokenId(app, request.user.id, requestedTokenId);
+      if (resolved === null) {
+        return reply.code(404).send({ error: 'Token not found' });
       }
+      tokenId = resolved;
+    } else if (Number.isInteger(DEFAULT_GATE_TOKEN_ID) && DEFAULT_GATE_TOKEN_ID > 0) {
+      const resolved = await resolveGateTokenId(app, request.user.id, DEFAULT_GATE_TOKEN_ID);
+      if (resolved === null) {
+        return reply.code(404).send({ error: 'No gate token configured for this account' });
+      }
+      tokenId = resolved;
     } else {
       const gateApp = await app.prisma.app.findUnique({
         where: { gateUserId: request.user.id },

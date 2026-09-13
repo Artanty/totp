@@ -1336,3 +1336,191 @@ Open: safe/web TOTP_URL must point to the web deployment (not back /totp/web) on
   только POST /init). `npm run build` чистый. Пробный временный guard в auth-feature
   (spinner до session()) откатан — корневая причина была в gate. Отдельно: /init 404 у
   probe-юзера ожидаемо (tokenId=5 принадлежит другому юзеру).
+
+## 2026-09-12 — safe web (dev): GET /auth/totp/state → 502 (план+done)
+- Симптом: в safe web dev при открытии гейта devtools показывает
+  `GET http://localhost:3231/auth/totp/state + Preflight → 502`.
+- Тракт: safe/web (:4256) → `<safe-totp-gate baseUrl=SAFE_BACK_URL session>` (injected session,
+  ДЕФОЛТНЫЙ stateUrl `{baseUrl}/auth/totp/state` на safe-бэк :3231) → safe/back relays
+  `POST {TOTP_BACK_URL}/auth/totp/init` → ответ 404 → safe/back возвращает свой
+  502 `TOTP_SERVER_ERROR` (routes/auth.ts:45-48).
+- Корневая причина: `safe/back/.env` → `TOTP_BACK_URL=http://188.225.26.46/totp` (PROD),
+  а прод-totp-back всё ещё работает на СТАРОМ коде: `POST /auth/totp/init` → 404
+  (проверено: login 200, init 404). Локальный totp-back :3278/totp с этим же safe.gate
+  user + TOTP_TOKEN_ID=2 отвечает 200 (gateSessionId/nonce) — т.е. код SAFE локально корректен.
+- Решение (по выбору юзера): НЕ менять локальный .env; юзер сам выполняет rebuild+redeploy
+  нового totp web+back на прод (188.225.26.46; deploy-web/deploy-back workflows) — это чинит
+  и прод safe gate. После редеплоя перепроверить `GET /totp/auth/totp/init` на проде.
+
+## 2026-09-12 — Dev-only: версия в gate из build/.env TAG_VERSION (план)
+
+- Требование: в dev (ng serve / development-сборки) показывать в `safe-totp-gate`
+  (`.version` в gate.component.ts) реальную версию из `build/.env` TAG_VERSION
+  (пишет serf/githooklib при коммите, сейчас = 0.1.33.0.0.19), а не хардкод
+  `web/.env` TAG_VERSION='0.0.0.0.0.1'.
+- Прод НЕ трогаем: CI-build (deploy-web.yml, `ng build`) продолжает читать
+  serf-`TAG_VERSION` из slave-`web/.env`; `build/.env` только локальный (gitignored).
+- Реализация: `web/webpack.config.js`:
+  - определить dev: argv содержит `serve` (npm start) или `development`
+    (ng build --configuration development / watch);
+  - в dev читать `../build/.env` (fs+regex, TAG_VERSION, strip кавычки) и,
+    если есть значение → использовать его для DefinePlugin TOTP_GATE_VERSION;
+  - иначе прежний fallback `process.env.TAG_VERSION || '0.0.0.0.0.0'`.
+- Проверка: dev-сборка (development) → версия 0.1.33.0.0.19 в бандле;
+  prod-сборка → по-прежнему fallback/серферовская версия (build/.env не используется).
+
+### Progress (2026-09-12) — ГОТОВО
+- `web/webpack.config.js`: добавлен dev-детект (`process.argv` содержит `serve`/`development`),
+  функция `devTagVersion()` читает `../build/.env` (fs+regex, strip кавычек; только в dev).
+  DefinePlugin `TOTP_GATE_VERSION = devTagVersion() ?? (process.env.TAG_VERSION || '0.0.0.0.0.0')`.
+- Нюанс: `??` нельзя миксовать с `||` без скобок (SyntaxError) — взял в скобки.
+- Проверено:
+  - `ng build --configuration development` → в бандле `0.1.33.0.0.19` (из build/.env);
+    старого dev-значения `0.0.0.0.0.1` нет.
+  - `ng build` (production, как в CI) → `0.1.33.0.0.19` НЕ найдено (build/.env не
+    используется), в gate-чанке прежний fallback `0.0.0.0.0.1` (web/.env TAG_VERSION).
+- Прод/CI не затронуты (build/.env local-only, gitignored; CI-сборка читает slave web/.env).
+- Не закоммичено.
+
+## 2026-09-12 — Prod gate: POST /totp/auth/totp/init → 400 (план)
+
+- Симптом: в прод totp-web (pomi-doro.ru/totp-web) после логина cеть показывает
+  `POST https://pomi-doro.ru/totp/auth/totp/init → 400`.
+- Диагноз (воспроизведено локально против back :3278): 400 =
+  `FST_ERR_CTP_EMPTY_JSON_BODY` ("Body cannot be empty when content-type is set
+  to 'application/json'") — Fastify-парсер пустого JSON-тела.
+- Причина: прод-бандл содержит `const tokenId = Number("")` → TOTP_GATE_TOKEN_ID
+  в env-группе web не задан → `stateParams: undefined` → gate шлёт POST /init
+  с пустым телом + Content-Type: application/json → 400.
+- План:
+  1. `web/src/app/core/totp-session.service.ts` init(): при `stateMethod === 'POST'`
+     всегда слать JSON-тело (`stateParams ?? {}`) — пустой body 400 невозможен
+     ни у одного потребителя (в т.ч. safe/web, т.к. remote общий).
+  2. Прод-фикс (user side): в safe env-группу totp-web добавить
+     `TOTP_GATE_TOKEN_ID=5` и передеплоить web (build вчитывает slave .env) —
+     без него админ-гейт после этого фикса получит 404 "No gate token configured".
+  3. Проверка: dev-sweep init c `{}` → 200/четкий ответ; build чистый.
+
+### Progress (2026-09-12) — ГОТОВО
+- `web/src/app/core/totp-session.service.ts` init(): `if (stateMethod === 'POST')
+  stateInit.body = JSON.stringify(stateParams ?? {})` — пустое JSON-тело больше
+  невозможно (FST_ERR_CTP_EMPTY_JSON_BODY исключён). Remote общий → фикс
+  валиден и для safe/web.
+- Воспроизведено/проверено (back :3278):
+  - пустой body + Content-Type json → было 400; теперь `{}` → 200 {gateSessionId, nonce}.
+  - dev + prod сборки web чистые; в common-chunk бандла фикс виден
+    (`JSON.stringify(stateParams ?? {})`).
+- Прод-факт: main.js содержит `Number("")` → TOTP_GATE_TOKEN_ID в env-группе
+  тotp-web НЕ задан. ОБЯЗАТЕЛЬНО (user side): добавить `TOTP_GATE_TOKEN_ID=5`
+  в safe env totp-web и передеплоить; иначе админ-гейт после фикса вернёт
+  404 "No gate token configured for this account" (бэкенд для админа без
+  tokenId не находит gate-токен).
+- Тестовые данные (repro app/user/token) удалены.
+- Не закоммичено.
+
+## 2026-09-12 — safe/web: BYPASS_TOTP env (как в totp/web) (план)
+
+- Копия totp/web-механики `BYPASS_TOTP`, адаптированная под safe/web
+  (@ngx-env/builder, а не DefinePlugin): angular.json prefix, .env/.env.example,
+  main.ts (boot без TOTP_URL при bypass), auth-feature (guardEnabled, без init).
+- Детали и результат — в safe/DECISIONS.md.
+
+### Progress (2026-09-12) — ГОТОВО (safe/web)
+- BYPASS_TOTP добавлен в safe/web (angular.json ngxEnv prefix, .env/.env.example,
+  main.ts boot, auth-feature guardEnabled) — копия механики totp/web, адаптированная
+  под @ngx-env/builder. Сборка чистая, бандл без process.env (инлайн). Детали в
+  safe/DECISIONS.md. НЕ закоммичено.
+
+### Progress (2026-09-12, продолжение safe/web)
+- Cимптом: BYPASS_TOTP=true в safe/web → бесконечный reload (safe/back 401
+  TOTP_SESSION_MISSING → interceptor location.reload).
+- Причина: TOTP-gate в safe = единственная авторизация (у totp — admin cookie).
+  Нужен bypass и в safe/back. План/прогресс — в safe/DECISIONS.md.
+
+### Progress (2026-09-12) — рефактор safe/web BYPASS_TOTP завершён
+- По решению пользователя: safe/back — единый источник флага; safe/web узнаёт его
+  в рантайме через `GET /auth/totp/status` и сам решает (bypass→dashboard, иначе
+  gate). Baked-флаг в web удалён (interceptor/angular.json/.env), main.ts упрощён.
+  Подробности — safe/DECISIONS.md. НЕ закоммичено.
+
+## 2026-09-12 — totp: BYPASS_TOTP как в safe (back = единый источник) (план)
+- Аналогично safe: флаг живёт в totp/back (.env), веб читает его в рантайме.
+- totp/back: `src/lib/config.ts` (BYPASS_TOTP const); в totpGuardRoutes публичный
+  `GET /auth/totp/status` → { bypass } (без JWT, как safe). .env → BYPASS_TOTP=true
+  (dev, зеркалит safe), .env.example → док.
+- totp/web: убрать baked BYPASS_TOTP (webpack DefinePlugin, types.d.ts, .env/.env.example).
+  auth-feature: сигналы bypass/statusChecked; ngOnInit — fetch status (fail-closed);
+  guardEnabled = !!TOTP_URL && !bypass(); gate стартует по эффекту после status.
+
+### Progress (2026-09-12) — ГОТОВО
+- totp/back: `src/lib/config.ts` (BYPASS_TOTP const); totpGuardRoutes + публичный
+  `GET /auth/totp/status` → { bypass } (без JWT; init/verify как были за JWT).
+  back/.env → BYPASS_TOTP=true (dev), .env.example → док.
+- totp/web: удалён baked BYPASS_TOTP (webpack DefinePlugin, types.d.ts, .env/.env.example).
+  auth-feature: сигналы bypass/statusChecked; ngOnInit fetch
+  `${baseUrl}/auth/totp/status` (fail-closed); guardEnabled = !!TOTP_URL && !bypass();
+  эффект: statusChecked → bypass&&loggedIn → complete; gate стартует по эффекту.
+- Проверено: back typecheck чистый; smoke через tsx: BYPASS=true → status
+  {bypass:true}, unset → {bypass:false}, /init без JWT → 401. Web prod+dev build
+  чистые, в бандле нет BYPASS. Скрипт удалён. (План/контекст safe-механики — safe/DECISIONS.md.)
+- НЕ закоммичено. git status ниже.
+
+### Fix (2026-09-12) — dev 404 /totp/auth/totp/status
+- Диагноз: локальный back (PID 12107) запущен `node dist/index.js` из старого
+  dist (без config.js/status-роута) → 404. Нужен rebuild + рестарт back.
+- План: npm run build (prisma generate && tsc) → рестарт старого процесса →
+  проверка /totp/auth/totp/status = { bypass: true }.
+
+### Progress (2026-09-12) — ГОТОВО
+- Причина 404: local back (PID 12107) был старым `node dist/index.js` без
+  status-роута. Rebuild (`npm run build` ok, появился dist/lib/config.js).
+- Рестарт back: старый kill, новый `node dist/index.js` (PID 12511, nohup,
+  лог в /var/folders/.../T/opencode/totp-back-dev.log).
+- Проверено: 3278 `/totp/auth/totp/status` → 200 { bypass:true };
+  прокси dev-веба http://localhost:4207/totp/auth/totp/status → 200 (лог back
+  подтверждает). Процесс back теперь фоновый (не из консоли юзера) — юзер может
+  kill 12511 и поднять свой. НЕ закоммичено.
+
+## 2026-09-12 — token id только в back (envy TOTP_TOKEN_ID) (план)
+- Решение: переиспользовать существующий back `TOTP_TOKEN_ID` (сейчас legacy, в src
+  не используется) как единый id для admin-гейта. Веб перестаёт слать tokenId.
+- totp/back totpGuard/init: порядок резолва — body tokenId (safe шлют свой) →
+  env TOTP_TOKEN_ID (если принадлежит request.user) → gateApp lookup → 404.
+- totp/web: удалить TOTP_GATE_TOKEN_ID (webpack DefinePlugin, types.d.ts, .env,
+  .env.example, startGate без tokenId → body {}).
+- Проверка: build back+web, smoke init без tokenId (admin JWT) → 200.
+
+### Progress (2026-09-12) — ГОТОВО
+- token id теперь только в back: totp/back/init резолвит body tokenId →
+  env TOTP_TOKEN_ID (чужой/чка не пройдёт — ownership check userId) → gateApp.
+- totp/web: TOTP_GATE_TOKEN_ID удалён (webpack/types.d.ts/.env/.env.example/auth-feature —
+  gate шлёт {} вместо {tokenId}).
+- Проверено: typecheck чистый; smoke_init (реальная БД): init без tokenId → 200
+  (+gateSessionId/nonce), foreign tokenId (safe.gate@totp.local) → 404, unknown → 404;
+  скрипт удалён. dist пересобран (rm -rf dist, build_exit=0, config.js/totpGuard.js есть).
+  web prod build чистый. Побочный след смока: пара pending gateSession (истекают) в dev БД.
+- NOTE: прод-веб больше не требует TOTP_GATE_TOKEN_ID в env-группе; достаточно
+  TOTP_TOKEN_ID=5 на бэке. НЕ закоммичено.
+
+### Progress (2026-09-13) — баг env-fallback в init: фикс adminApp
+- Симптом: dev BYPASS_TOTP=false, init POST /totp/auth/totp/init → 404
+  "No gate token configured for this account".
+- Причина: админ логинится как user 4 (antoshkinartyom@gmail.com). Токен 5
+  принадлежит gate-аккаунту user 8 (totp.gate@totp.local), а связь user4→token5
+  идёт через App.adminId (app id4: adminId4, gateUserId8, tokenId5). Новый env-фоллбэк
+  искал только token.findFirst({id:TOTP_TOKEN_ID,userId}), для user4 не находил → 404.
+- Фикс: единый resolveGateTokenId(app,userId,tokenId) — токен принадлежит юзеру ИЛИ
+  adminApp{adminId:userId,tokenId}. Применён и к body-tokenId ветке. totpGuard.ts.
+- Проверено (inject, реальная БД): user4 {} → 200; user8 {} → 200; user4 tokenId5 → 200;
+  user11 (чужой, нет связей) → 404. status 200. typecheck чистый, dist пересобран.
+- НЕ закоммичено. Юзеру нужно ПЕРЕЗАПУСТИТЬ back (node dist/index.js), чтобы взять dist.
+
+### Progress (2026-09-13) — резолюция токена переведена на App (не token.userId)
+- Модель данных: Token принадлежит App (App.tokenId @unique), App связывает
+  adminId/гатеuser/gateUserId/токен. Админ user4 НЕ владелец токена5, но он admin
+  app с tokenId5. token.userId — не про гейт.
+- resolveGateTokenId теперь: App.findFirst({ tokenId, OR:[{adminId},{gateUserId}] }).
+  Без ветки token.findFirst({userId}).
+- Проверено: admin id4 {} →200; gateuser id8 {} →200; safe id3 tokenId2 →200;
+  admin tokenId2 →200; чужой id11 →404; id8 tokenId2 (не его app) →404.
+  typecheck чистый, dist пересобран. НЕ закоммичено.
