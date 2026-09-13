@@ -29,6 +29,10 @@ export type TotpSessionConfig = {
   stateParams?: Record<string, unknown>;
   /** Verify endpoint. Default `${baseUrl}/auth/totp/verify`. */
   verifyUrl?: string;
+  /** Lock endpoint. Default `${baseUrl}/auth/totp/lock`. On lock() the session
+   *  best-effort POSTs there so the server invalidates the gate session and a
+   *  page refresh re-requires the code. */
+  lockUrl?: string;
 };
 
 export type TotpSession = {

@@ -97,6 +97,27 @@ export default async function totpGuardRoutes(app: FastifyInstance): Promise<voi
       tokenId = gateApp.tokenId;
     }
 
+    // Resume the existing verified session for this gate user + token when still
+    // valid. A stable nonce lets the client keep its unlock across page refreshes
+    // without re-entering the code. Lock (`/lock`) and expiry invalidate it, so a
+    // next init falls back to a fresh pending session and the code is required again.
+    const existing = await app.prisma.gateSession.findFirst({
+      where: {
+        userId: request.user.id,
+        tokenId,
+        state: 'verified',
+        expiresAt: { gt: new Date() },
+      },
+      orderBy: { id: 'desc' },
+    });
+    if (existing) {
+      return reply.send({
+        gateSessionId: existing.id,
+        nonce: existing.nonce,
+        expiresAt: existing.expiresAt.toISOString(),
+      });
+    }
+
     const session = await app.prisma.gateSession.create({
       data: {
         userId: request.user.id,
@@ -168,5 +189,18 @@ export default async function totpGuardRoutes(app: FastifyInstance): Promise<voi
       expiresAt: new Date(Date.now() + TOTP_GUARD_SESSION_MS).toISOString(),
       nonce: session.nonce,
     });
+  });
+
+  app.post('/lock', opts, async (request: FastifyRequest, reply: FastifyReply) => {
+    await app.prisma.gateSession.updateMany({
+      where: {
+        userId: request.user.id,
+        state: { in: ['pending', 'verified'] },
+        expiresAt: { gt: new Date() },
+      },
+      data: { state: 'revoked', expiresAt: new Date() },
+    });
+
+    return reply.send({ ok: true });
   });
 }

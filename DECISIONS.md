@@ -508,7 +508,41 @@ src/lib/otpauth.ts      — парсер otpauth:// URI
   `GET /totp/client/gate-7ZQB3ALY.js` → 200 `cache-control: public, max-age=31536000, immutable`.
 - На сервер НЕ задеплоено (push только по явному запросу).
 
-## 2026-09-09 — Иконка замка TOTP gate → microns mu-lock (план)
+## 2026-09-13 — Refresh page without re-entering TOTP (план)
+
+- Требование юзера (chat/web): после F5 не вводить код снова.
+- Причина текущего поведения: `/auth/totp/init` каждый раз создаёт НОВЫЙ GateSession
+  с новым nonce → сохранённый web nonce не совпадает → gate. Resume-логика в web уже есть
+  (nonce из localStorage vs ответ init), ломается только обновлением nonce на бэке.
+- План:
+  1. totp/back `routes/totpGuard.ts` `/init`: если для (userId, tokenId) есть НЕИСТЕКШИЙ
+     GateSession со `state='verified'` — вернуть ЕГО nonce/gateSessionId/expiresAt (resume);
+     иначе — создать новый pending. Lock/expiry = verification resets → код нужен снова.
+  2. totp/back: новый `POST /auth/totp/lock` (auth) — помечает все неистёкшие сессии юзера
+     `state='revoked'` (+ expiresAt=now), чтобы после lock F5 ОБЯЗАТЕЛЬНО требовал код.
+  3. totp/web core `core/totp-session.service.ts` (+ interface): config `lockUrl?`,
+     lock() best-effort POST `{lockUrl ?? baseUrl}/auth/totp/lock` (огне-и-забыл) → покрывает
+     админ-гейт totp/web и прямых потребителей.
+  4. safe/back + chat/back `routes/auth.ts` lock-хендлер: после revoke своего in-memory
+     токена релеить `POST /auth/totp/lock` в totp (remoteApiRequest, тот же gate-логин).
+  5. Поведение: F5 в пределах сессии → без кода; lock → F5 → снова код; TOTP_SESSION_MS
+     (1h web/back, 12h totp) остаётся границей сессии. Рegression-риск: lock-reload в
+     safe/totp-web раньше тоже требовал код — теперь НЕ требует (это и есть фича).
+- Проверка: typecheck/build всех, E2E (unlock → F5 → shell без кода; lock → F5 → gate;
+  повторный unlock). Деплой — обычный цикл, по явному запросу.
+
+### Progress (2026-09-13) — ГОТОВО
+- totp/back: `/init` резюмит latest `verified` неистёкшую сессию (userId+tokenId),
+  иначе — новый pending; новый `POST /auth/totp/lock` (auth) → updateMany всех
+  pending/verified неистёкших сессий юзера → state=revoked + expiresAt=now. build OK.
+- totp/web core: `lockUrl?` в конфиге (default `${baseUrl}/auth/totp/lock`); lock() шлёт
+  best-effort POST перед сбросом локального состояния. Build OK.
+- safe/back и chat/back: `/auth/totp/lock` дополнительно релеит `POST /auth/totp/lock` в
+  totp (тот же gate-логин через remoteApiRequest). typecheck OK.
+- E2E (полная цепочка, реальный код токена 8, чистый слэйт через /lock) — ВСЕ PASS:
+  boot → gate; unlock → shell; **F5 → shell БЕЗ кода (resume)**; lock → gate сразу;
+  **F5 после lock → снова код**; re-unlock → shell; ноль консольных ошибок.
+- На сервер НЕ задеплоено (обычный цикл commit→serf→деплой, по явному запросу).
 
 - Требование: заменить иконку-замок в TOTP gate на `mu-lock` из microns
   (https://www.s-ings.com/projects/microns-icon-font/, класс `.mu-lock`, glyph \E735).

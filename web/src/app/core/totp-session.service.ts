@@ -33,6 +33,7 @@ export function createTotpSession(config: TotpSessionConfig): TotpSession {
   const stateMethod = config.stateMethod ?? 'GET';
   const stateParams = config.stateParams;
   const verifyUrl = config.verifyUrl ?? `${baseUrl}/auth/totp/verify`;
+  const lockUrl = config.lockUrl ?? `${baseUrl}/auth/totp/lock`;
   const token = config.token;
 
   const listeners = new Set<(state: TotpSessionState) => void>();
@@ -230,6 +231,15 @@ export function createTotpSession(config: TotpSessionConfig): TotpSession {
   }
 
   function lock(): void {
+    // Best-effort server-side invalidation so a page refresh after lock
+    // re-requires the code (the back's /init would otherwise resume the
+    // verified gate session and keep the app unlocked).
+    fetch(lockUrl, {
+      method: 'POST',
+      headers: buildHeaders(),
+      body: '{}',
+      credentials: 'same-origin',
+    }).catch(() => undefined);
     stopWatchdog();
     clearSession();
     lastNonce = '';
