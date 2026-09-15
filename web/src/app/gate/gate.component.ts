@@ -29,6 +29,8 @@ export type TotpGateTexts = {
   serverError: string;
   noConnection: string;
   generic: string;
+  pasteCode: string;
+  pasteHint: string;
 };
 
 export const DEFAULT_TEXTS: TotpGateTexts = {
@@ -42,6 +44,8 @@ export const DEFAULT_TEXTS: TotpGateTexts = {
   serverError: 'Ошибка на сервере',
   noConnection: 'Нет связи с сервером',
   generic: 'Не удалось проверить код. Попробуйте позже.',
+  pasteCode: 'Вставить код',
+  pasteHint: 'Или долгим нажатием — «Вставить» в первом поле',
 };
 
 const DIGIT_COUNT = 6;
@@ -78,6 +82,14 @@ declare const TOTP_GATE_VERSION: string | undefined;
             (paste)="onPaste($event)"
           />
         </div>
+
+        <button
+          class="paste-btn"
+          type="button"
+          [disabled]="loading"
+          (click)="onPasteClick()"
+        >{{ mergedTexts.pasteCode }}</button>
+        <p class="paste-hint">{{ mergedTexts.pasteHint }}</p>
 
         <div class="refresh" *ngIf="sessionState.ready && sessionState.stateFailed">
           <p>{{ mergedTexts.refreshMessage }}</p>
@@ -148,6 +160,26 @@ declare const TOTP_GATE_VERSION: string | undefined;
       box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent, #2c6df6) 25%, transparent);
     }
     .digit:disabled { opacity: 0.5; }
+    .paste-btn {
+      margin: 18px auto 0;
+      display: block;
+      padding: 8px 22px;
+      font-size: 14px;
+      border-radius: 6px;
+      border: 1px solid var(--accent, #2c6df6);
+      background: var(--bg-widget, #141823);
+      color: var(--accent, #2c6df6);
+      cursor: pointer;
+      font-family: var(--font, inherit);
+    }
+    .paste-btn:hover { background: var(--bg-hover, #1b2232); }
+    .paste-btn:disabled { opacity: 0.5; cursor: default; }
+    .paste-hint {
+      color: var(--text-muted, #8b93a7);
+      font-size: 11px;
+      margin: 8px 0 0;
+      font-family: var(--font, inherit);
+    }
     .error {
       color: #e5484d;
       font-size: 12px;
@@ -287,19 +319,51 @@ export class GateComponent implements OnChanges, OnDestroy {
 
   onPaste(event: ClipboardEvent): void {
     const text = event.clipboardData?.getData('text') ?? '';
-    const parsed = (text.match(/\d/g) ?? []).slice(0, DIGIT_COUNT);
-    if (!parsed.length) return;
-    event.preventDefault();
-    parsed.forEach((digit, i) => {
+    this.applyDigits(this.extractDigits(text));
+  }
+
+  /** "Paste code" button: read clipboard via navigator.clipboard (works on
+   *  https and localhost). On plain http (dev over LAN on a phone) the API is
+   *  unavailable — fall back to focusing the first box so the OS paste menu
+   *  (long-press) appears there. */
+  async onPasteClick(): Promise<void> {
+    if (this.loading) return;
+    let text = '';
+    let clipboardRead = false;
+    try {
+      if (navigator.clipboard?.readText) {
+        text = await navigator.clipboard.readText();
+        clipboardRead = true;
+      }
+    } catch {
+      // permission denied or non-secure context — fall through
+    }
+    if (clipboardRead && text) {
+      this.applyDigits(this.extractDigits(text));
+      return;
+    }
+    this.focusDigit(0);
+  }
+
+  private extractDigits(text: string): string[] {
+    return (text.match(/\d/g) ?? []).slice(0, DIGIT_COUNT);
+  }
+
+  private applyDigits(digits: string[]): void {
+    if (!digits.length) {
+      this.focusDigit(0);
+      return;
+    }
+    digits.forEach((digit, i) => {
       this.digits[i] = digit;
     });
     const inputs = this.el.nativeElement.shadowRoot?.querySelectorAll('input.digit');
     inputs?.forEach((box: Element, i: number) => {
       const input = box as HTMLInputElement;
-      input.value = this.digits[i];
+      input.value = this.digits[i] ?? '';
       input.classList.toggle('filled', this.digits[i] !== '');
     });
-    this.focusDigit(Math.min(DIGIT_COUNT - 1, parsed.length - 1));
+    this.focusDigit(Math.min(DIGIT_COUNT - 1, digits.length - 1));
     if (this.value.length === DIGIT_COUNT) {
       void this.onSubmit();
     }
