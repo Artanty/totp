@@ -162,7 +162,8 @@ export function createTotpSession(config: TotpSessionConfig): TotpSession {
         !!data.nonce &&
         nonce === data.nonce &&
         savedAt > 0 &&
-        Date.now() - savedAt < sessionMs;
+        Date.now() - savedAt < sessionMs &&
+        !!readString(sessionTokenKey);
       if (!valid) {
         clearSession();
         lastNonce = data.nonce ?? '';
