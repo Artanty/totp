@@ -1558,3 +1558,39 @@ Open: safe/web TOTP_URL must point to the web deployment (not back /totp/web) on
 - Проверено: admin id4 {} →200; gateuser id8 {} →200; safe id3 tokenId2 →200;
   admin tokenId2 →200; чужой id11 →404; id8 tokenId2 (не его app) →404.
   typecheck чистый, dist пересобран. НЕ закоммичено.
+
+## 2026-11-05 — Ротация логов по дням: app.log = только сегодня+вчера (план)
+- Проблема: `GET /totp/get-updates` отдаёт ~27000 строк — app.log копится месяцами.
+  Есть только size-ротация (LOG_MAX_BYTES=1MB × LOG_MAX_FILES=5 → до 6MB), по дате
+  ничего не чистится, getLogs читает все .1..N файла целиком.
+- Решение (в `back/src/lib/logger.ts`): day-based retention для **app.log**.
+  При КАЖДОЙ записи не-error лога проверяем ключ текущего дня; если день наступил
+  новый — внутри serialize-очереди читаем app.log и app.log.1..maxFiles, выкидываем
+  записи с `ts` раньше начала вчерашнего дня (локальное время), файлы без свежих
+  строк удаляем, остальные перезаписываем.
+- Интерпретация требования: ротируем ТОЛЬКО не-error лог (app.log / `logs.log`).
+  `error.log` (`logs.error`) и `app.strat.log` (`logs.start`) — НЕ трогаем.
+- Настройка: `LoggerOptions.keepDays` / env `LOG_KEEP_DAYS`, default 2 (сегодня+вчера).
+- Проверка дешёвая (сравнение строки дня, без I/O); сама чистка — раз в день, в очереди.
+- Стартовая запись `Server is running` (index.ts:15) триггерит чистку сразу после деплоя.
+- Проверка: typecheck; smoke на временных файлах — записи 3 дней → один вызов log()
+  → остаются только сегодняшние+вчерашние, error.log/app.strat.log не изменились.
+
+### Progress (2026-11-05) — ГОТОВО
+- `back/src/lib/logger.ts`: добавлены `LoggerOptions.keepDays` / env `LOG_KEEP_DAYS`
+  (default 2, min 1), поле `keepDays`, `dayKey()`, `retainRecentDays()`; в `emit()`
+  перед size-ротацией для app.log вызывается `retainRecentDays()`.
+- Как работает: проверка — сравнение строки дня (без I/O, на каждую запись); сама
+  чистка — раз в день, внутри serialize-очереди: читаются app.log + app.log.1..maxFiles,
+  строки с `ts` раньше начала вчерашнего дня (локальное время) выбрасываются, пустые
+  файлы удаляются, остальные перезаписываются. Ошибка чистки логируется в console и
+  НЕ роняет запись (повтор на следующей записи). error.log и app.strat.log не проходят
+  через retention (emit берёт только не-error уровень, logToFile — отдельный путь).
+- Документация в шапке logger.ts обновлена (LOG_KEEP_DAYS, day retention).
+- Проверено (сабагент): `cd back && npm run typecheck` → чисто (exit 0); сборка `npx tsc`
+  чистая; smoke на dist/lib/logger.js — 5/5 PASS: stale-записи 5-дневной давности
+  удалены из app.log и app.log.1, сегодня+вчера+новые сохранены; error.log и
+  app.strat.log со stale-строками не тронуты; повторная запись ничего не ломает.
+- Эффект на /get-updates: `logs.log` ужмётся до 2 дней уже после первого лога после
+  рестарта (index.ts пишет `Server is running` на старте). Требуется перезапуск back
+  (node dist/index.js), dist пересобран. НЕ закоммичено.

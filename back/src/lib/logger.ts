@@ -7,16 +7,23 @@
  *   LOG_DIR        (default: <cwd>/logs)
  *   LOG_MAX_BYTES  (default: 1_000_000  — rotate a file once it exceeds this size)
  *   LOG_MAX_FILES  (default: 5          — keep this many rotated files)
+ *   LOG_KEEP_DAYS  (default: 2          — app.log keeps today + yesterday only)
  *   LOG_DISABLED   ('true' to turn off file writing)
  *
  * Files:
- *   <LOG_DIR>/app.log       — log + warn entries
- *   <LOG_DIR>/error.log     — error entries
+ *   <LOG_DIR>/app.log       — log + warn entries  (day-limited, see below)
+ *   <LOG_DIR>/error.log     — error entries       (never day-limited)
  *
  * Rotation: when a file exceeds LOG_MAX_BYTES it is renamed to <name>.1, the
  * previous .1 becomes .2, ..., and <name>.N is removed. Rotation happens on
  * write and is serialized through an internal queue, so concurrent appends
  * never interleave with a rename.
+ *
+ * Day retention (app.log only): every non-error write checks the current
+ * calendar day; when the day changes, app.log and app.log.1..N are rewritten
+ * keeping only entries from the last LOG_KEEP_DAYS days (today + yesterday),
+ * and files left with no fresh entries are deleted. error.log and extra files
+ * written via logToFile() (e.g. app.strat.log) are never day-limited.
  *
  * Notes for free Render/Vercel tiers:
  *   - Render free: the project dir is writable, but the disk is ephemeral —
@@ -29,7 +36,7 @@
  *   { "ts": "<ISO datetime>", "level": "log|warn|error", "fn": "<caller fn>",
  *     "msg": "<message>", "stack": "<error stack, errors only>", "data": {...} }
  */
-import { appendFile, mkdir, readFile, rename, rm, stat } from 'node:fs/promises';
+import { appendFile, mkdir, readFile, rename, rm, stat, writeFile } from 'node:fs/promises';
 import { existsSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -54,6 +61,8 @@ export interface LoggerOptions {
   errorFilename?: string;
   maxBytes?: number;
   maxFiles?: number;
+  /** days of non-error log to keep (default 2 = today + yesterday) */
+  keepDays?: number;
   enabled?: boolean;
 }
 
@@ -106,8 +115,11 @@ export class Logger {
   private readonly errorFile: string;
   private readonly maxBytes: number;
   private readonly maxFiles: number;
+  private readonly keepDays: number;
   private readonly enabled: boolean;
   private queued: Promise<void> = Promise.resolve();
+  /** local day key ('YYYY-MM-DD') of the last completed day-retention pass */
+  private retentionDay = '';
 
   constructor(opts: LoggerOptions = {}) {
     this.dir = opts.dir ?? process.env.LOG_DIR ?? join(process.cwd(), 'logs');
@@ -115,6 +127,7 @@ export class Logger {
     this.errorFile = join(this.dir, opts.errorFilename ?? 'error.log');
     this.maxBytes = opts.maxBytes ?? (Number(process.env.LOG_MAX_BYTES) || 1_000_000);
     this.maxFiles = opts.maxFiles ?? (Number(process.env.LOG_MAX_FILES) || 5);
+    this.keepDays = Math.max(1, opts.keepDays ?? (Number(process.env.LOG_KEEP_DAYS) || 2));
     this.enabled = opts.enabled ?? process.env.LOG_DISABLED !== 'true';
     mkdir(this.dir, { recursive: true }).catch((err) =>
       console.error('[logger] cannot create log dir:', err)
@@ -148,11 +161,73 @@ export class Logger {
     await rename(file, `${file}.1`);
   }
 
+  /** Local calendar day key, e.g. '2026-11-05'. */
+  private dayKey(d: Date): string {
+    const p = (n: number): string => String(n).padStart(2, '0');
+    return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())}`;
+  }
+
+  /**
+   * Day retention for the non-error log (app.log + its rotated copies).
+   *
+   * Called on every app.log write: the check itself is a single string
+   * compare, and the real pass runs at most once per calendar day, always
+   * inside the write queue so it can never race an append/rename. Entries
+   * older than the start of (today - keepDays + 1) are dropped — with the
+   * default keepDays=2 that is "today + yesterday only". error.log and files
+   * written through logToFile() (app.strat.log) are never passed here.
+   */
+  private async retainRecentDays(): Promise<void> {
+    const now = new Date();
+    const key = this.dayKey(now);
+    if (key === this.retentionDay) return;
+
+    try {
+      const cutoff = new Date(
+        now.getFullYear(),
+        now.getMonth(),
+        now.getDate() - this.keepDays + 1
+      ).getTime();
+
+      const files = [this.appFile];
+      for (let i = 1; i <= this.maxFiles; i++) files.push(`${this.appFile}.${i}`);
+
+      for (const file of files) {
+        let text: string;
+        try {
+          text = await readFile(file, 'utf8');
+        } catch {
+          continue; // no such file yet
+        }
+        const nonEmpty = text.split('\n').filter((l) => l.trim());
+        const kept = nonEmpty.filter((raw) => {
+          try {
+            const ts = new Date((JSON.parse(raw) as LogEntry).ts).getTime();
+            return Number.isFinite(ts) && ts >= cutoff;
+          } catch {
+            return false; // malformed line goes away with the stale data
+          }
+        });
+        if (kept.length === nonEmpty.length) continue; // nothing stale
+        if (kept.length === 0) {
+          await rm(file, { force: true });
+          continue;
+        }
+        await writeFile(file, `${kept.join('\n')}\n`, 'utf8');
+      }
+      this.retentionDay = key;
+    } catch (err) {
+      // never break the caller's write — the pass is retried on the next write
+      console.error('[logger] day retention failed:', err);
+    }
+  }
+
   private async emit(entry: LogEntry): Promise<void> {
     if (!this.enabled) return;
     const line = JSON.stringify(entry);
     const file = entry.level === 'error' ? this.errorFile : this.appFile;
     await this.enqueue(async () => {
+      if (file !== this.errorFile) await this.retainRecentDays(); // non-error log only
       await this.rotateIfNeeded(file);
       await appendFile(file, `${line}\n`, 'utf8');
     });
