@@ -17,6 +17,7 @@ function validateCredentials(body: CredentialsBody): string | null {
   return null;
 }
 
+
 async function authRoutes(app: FastifyInstance): Promise<void> {
   app.post('/register', async (request, reply) => {
     const body = request.body as CredentialsBody | undefined;
